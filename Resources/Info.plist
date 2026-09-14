@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_CN</string>
+	<key>CFBundleExecutable</key>
+	<string>VrPico</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.eva.vrpico</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>VrPico</string>
+	<key>CFBundleDisplayName</key>
+	<string>EVA-VR Relay</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<!-- 纯状态栏 App：不在 Dock 显示图标 -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!--
+	  必须允许明文 HTTP。EVA Console 和 WebXR 页面都是 http://，
+	  服务器地址又是用户可配的任意 IP/VPN 地址，ATS 默认会以
+	  -1022（App Transport Security policy requires the use of a
+	  secure connection）拦掉全部探测。
+
+	  NSAllowsLocalNetworking 不够用：它只覆盖私有网段和 .local，
+	  而这里的服务器可能是 33.x 这类公网段地址（仅 VPN 内可达）。
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<!-- 打开浏览器访问 Client / Viser 页面，以及 adb 下载页 -->
+	<key>NSHumanReadableCopyright</key>
+	<string></string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>
