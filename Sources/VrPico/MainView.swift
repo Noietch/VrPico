@@ -139,6 +139,11 @@ struct MainView: View {
                 level: picoLevel
             )
             StatusRow(
+                label: NativePicoApp.displayName,
+                value: controller.nativePicoStatus.displayText,
+                level: nativePicoLevel
+            )
+            StatusRow(
                 label: "ADB reverse",
                 value: controller.reverseText,
                 level: controller.reverseEstablished ? .ok : .idle
@@ -190,6 +195,15 @@ struct MainView: View {
         case .multipleReady: return .working
         case .noDevices: return .idle
         default: return .failed
+        }
+    }
+
+    private var nativePicoLevel: StatusRow.Level {
+        switch controller.nativePicoStatus {
+        case .installed: return .ok
+        case .checking, .installing: return .working
+        case .failed: return .failed
+        case .unknown, .missing: return .idle
         }
     }
 
@@ -290,7 +304,7 @@ struct MainView: View {
             } label: {
                 HStack {
                     Image(systemName: "visionpro")
-                    Text("一键启动 EVA-VR")
+                    Text("连接 EVA")
                     Spacer()
                 }
             }

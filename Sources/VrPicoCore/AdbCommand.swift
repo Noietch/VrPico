@@ -18,6 +18,16 @@ public enum AdbCommand {
         ["devices", "-l"]
     }
 
+    /// Query whether an Android package is installed on one device.
+    public static func packagePath(serial: String, packageName: String) -> [String] {
+        ["-s", serial, "shell", "pm", "path", packageName]
+    }
+
+    /// Install an APK from the Mac without involving a shell.
+    public static func installAPK(serial: String, apkURL: URL) -> [String] {
+        ["-s", serial, "install", "-r", apkURL.path]
+    }
+
     public static func getState(serial: String) -> [String] {
         ["-s", serial, "get-state"]
     }

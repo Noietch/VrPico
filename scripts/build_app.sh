@@ -20,6 +20,7 @@ APP="$BUILD_DIR/$APP_NAME.app"
 ADB_VERSION="37.0.1"
 ADB_SOURCE="$ROOT/Vendor/android-platform-tools/$ADB_VERSION/adb"
 ADB_SHA256="1811e253b21b12cbfda7201ebaf86c10e7ddcb5c606a7a81f7c82b4c429c2d3b"
+PICO_APK_SOURCE="$ROOT/Resources/EVA-PICO.apk"
 
 DO_RUN=0
 DO_ZIP=0
@@ -40,6 +41,11 @@ fi
 
 if [[ ! -x "$ADB_SOURCE" ]]; then
     echo "缺少内置 ADB: $ADB_SOURCE" >&2
+    exit 1
+fi
+
+if [[ ! -r "$PICO_APK_SOURCE" ]]; then
+    echo "缺少内置 PICO APK: $PICO_APK_SOURCE" >&2
     exit 1
 fi
 
@@ -67,6 +73,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 cp -X "$ADB_SOURCE" "$APP/Contents/Helpers/adb"
+cp -X "$PICO_APK_SOURCE" "$APP/Contents/Resources/EVA-PICO.apk"
 chmod 755 "$APP/Contents/Helpers/adb"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"

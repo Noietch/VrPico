@@ -44,22 +44,29 @@ must also be running with the same ZMQ endpoints.
 
 ## Mac setup
 
-The distributed `.app` contains its own ADB binary. No Android SDK or
-Homebrew installation is needed.
+The distributed `.app` contains its own ADB binary and the tested
+`EVA-PICO v0.2.0` APK. No Android SDK, Homebrew, or manual APK installation is
+needed.
 
-1. Install `EVA-VR.apk` on PICO once.
-2. Enable USB debugging and accept the authorization prompt.
-3. Open the relay settings and enter the remote server IP/hostname.
-4. Keep the port at `43876` unless the remote node uses another port.
-5. Click **连接并启动 EVA-VR**.
+1. Enable USB debugging and accept the authorization prompt.
+2. Open the relay settings and enter the remote server IP/hostname.
+3. Keep the port at `43876` unless the remote node uses another port.
+4. Click **连接 EVA**.
 
 The app will:
 
-1. Test the remote TCP port.
-2. Start a local TCP relay.
-3. Create `adb reverse tcp:43876 tcp:43876`.
-4. Launch `org.eva.pico.input/.MainActivity`.
-5. Pass `ws://127.0.0.1:43876/ws?token=eva` to the native APK.
+1. Detect the authorized PICO.
+2. Check whether package `org.eva.pico.input` is installed.
+3. Install the bundled `EVA-PICO.apk` only when the package is missing.
+4. Test the remote TCP port.
+5. Start one local TCP relay.
+6. Create `adb reverse tcp:43876 tcp:43876`.
+7. Launch `org.eva.pico.input/.MainActivity` once.
+8. Pass `ws://127.0.0.1:43876/ws?token=eva` to the native APK.
+
+The main status panel shows the installation state. Reconnecting an already
+installed PICO skips `adb install`; pressing the connection action again only
+reuses the relay and restarts the native activity with the current endpoint.
 
 ## Build
 

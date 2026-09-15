@@ -70,4 +70,15 @@ final class InfoPlistTests: XCTestCase {
         let plist = try loadInfoPlist()
         XCTAssertNil(plist["NSAppleEventsUsageDescription"])
     }
+
+    func testBuildBundlesTheNativePicoAPK() throws {
+        let apk = packageRoot.appendingPathComponent("Resources/EVA-PICO.apk")
+        XCTAssertTrue(FileManager.default.isReadableFile(atPath: apk.path))
+
+        let script = try String(
+            contentsOf: packageRoot.appendingPathComponent("scripts/build_app.sh"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(script.contains("Contents/Resources/EVA-PICO.apk"))
+    }
 }

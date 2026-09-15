@@ -105,6 +105,37 @@ public struct AdbClient: Sendable {
         AdbDeviceSummary.summarize(try await devices())
     }
 
+    // MARK: - Android packages
+
+    /// Returns true when Android can resolve the native EVA package.
+    ///
+    /// `pm path` is intentionally used instead of parsing `dumpsys package`:
+    /// it is small, stable across Android/PICO versions, and does not require
+    /// knowing the installed version format.
+    public func isPackageInstalled(
+        serial: String,
+        packageName: String = NativePicoApp.packageName
+    ) async throws -> Bool {
+        let arguments = AdbCommand.packagePath(serial: serial, packageName: packageName)
+        let result = try await run(arguments)
+        guard result.succeeded else {
+            throw AdbError.commandFailed(arguments: arguments, result: result)
+        }
+        return result.stdout.split(whereSeparator: \.isNewline).contains {
+            $0.hasPrefix("package:")
+        }
+    }
+
+    /// Install the bundled native client. The caller must check first so a
+    /// normal reconnect does not reinstall the APK.
+    public func installAPK(serial: String, at apkURL: URL) async throws {
+        let arguments = AdbCommand.installAPK(serial: serial, apkURL: apkURL)
+        let result = try await run(arguments, timeout: 120)
+        guard result.succeeded else {
+            throw AdbError.commandFailed(arguments: arguments, result: result)
+        }
+    }
+
     // MARK: - reverse 映射
 
     public func reverseList(serial: String) async throws -> String {

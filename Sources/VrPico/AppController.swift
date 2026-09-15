@@ -3,6 +3,26 @@ import Foundation
 import SwiftUI
 import VrPicoCore
 
+enum NativePicoInstallStatus: Equatable {
+    case unknown
+    case checking
+    case installed
+    case missing
+    case installing
+    case failed(String)
+
+    var displayText: String {
+        switch self {
+        case .unknown: return "未检测"
+        case .checking: return "检测中…"
+        case .installed: return "已安装"
+        case .missing: return "未安装"
+        case .installing: return "安装中…"
+        case .failed(let message): return message
+        }
+    }
+}
+
 /// 全局状态与业务流程。
 ///
 /// 所有网络/进程操作都在这里发起，视图只负责展示和调用。
@@ -21,6 +41,7 @@ final class AppController: ObservableObject {
     @Published private(set) var deviceSummary: AdbDeviceSummary = .noDevices
     @Published private(set) var relayStats = RelayStats()
     @Published private(set) var serverStatus = StatusProbe.ServerReachability()
+    @Published private(set) var nativePicoStatus: NativePicoInstallStatus = .unknown
 
     // MARK: - 流程状态
 
@@ -34,6 +55,7 @@ final class AppController: ObservableObject {
     private let store = AppSettingsStore()
     private var relay: TcpRelay?
     private var refreshTimer: Timer?
+    private var autoInstallAttemptedSerial: String?
 
     /// 正在运行的连接必须保存建立时的快照。设置和设备列表会继续变化，清理时不能
     /// 再从那些可变状态推测 serial、端口或 adb 路径。
@@ -95,8 +117,11 @@ final class AppController: ObservableObject {
         }
         do {
             deviceSummary = try await client.deviceSummary()
+            await refreshNativePicoStatus(using: client)
         } catch {
             deviceSummary = .noDevices
+            nativePicoStatus = .unknown
+            autoInstallAttemptedSerial = nil
         }
     }
 
@@ -104,9 +129,92 @@ final class AppController: ObservableObject {
         guard adbAvailable, let client = adbClient else { return }
         do {
             deviceSummary = try await client.deviceSummary()
+            await refreshNativePicoStatus(using: client)
         } catch {
             // 轮询失败不打断用户操作，只更新状态。
             deviceSummary = .noDevices
+            nativePicoStatus = .unknown
+            autoInstallAttemptedSerial = nil
+        }
+    }
+
+    /// Check the native client as soon as a ready PICO appears. The first
+    /// missing-package check also installs the bundled APK automatically;
+    /// failures are remembered until the device disconnects so polling does
+    /// not repeatedly launch adb install.
+    private func refreshNativePicoStatus(using client: AdbClient) async {
+        let serial: String
+        switch deviceSummary {
+        case .ready(let device):
+            serial = device.serial
+        case .multipleReady:
+            nativePicoStatus = .unknown
+            return
+        case .noDevices, .unauthorized, .offline, .other:
+            nativePicoStatus = .unknown
+            autoInstallAttemptedSerial = nil
+            return
+        }
+
+        let previousStatus = nativePicoStatus
+        nativePicoStatus = .checking
+        do {
+            let installed = try await client.isPackageInstalled(serial: serial)
+            if installed {
+                nativePicoStatus = .installed
+                autoInstallAttemptedSerial = nil
+            } else {
+                if autoInstallAttemptedSerial == serial {
+                    if case .failed = previousStatus {
+                        nativePicoStatus = previousStatus
+                    } else {
+                        nativePicoStatus = .missing
+                    }
+                    return
+                }
+                nativePicoStatus = .missing
+                autoInstallAttemptedSerial = serial
+                _ = await installNativePico(serial: serial, client: client)
+            }
+        } catch {
+            nativePicoStatus = .failed("检查失败")
+        }
+    }
+
+    private func ensureNativePicoInstalled(serial: String, client: AdbClient) async -> Bool {
+        nativePicoStatus = .checking
+        do {
+            if try await client.isPackageInstalled(serial: serial) {
+                nativePicoStatus = .installed
+                return true
+            }
+        } catch {
+            nativePicoStatus = .failed("检查 EVA-PICO 失败：\(error.localizedDescription)")
+            lastError = error.localizedDescription
+            return false
+        }
+
+        return await installNativePico(serial: serial, client: client)
+    }
+
+    private func installNativePico(serial: String, client: AdbClient) async -> Bool {
+        let apkURL = NativePicoApp.bundledAPKURL()
+        guard FileManager.default.isReadableFile(atPath: apkURL.path) else {
+            let message = "找不到内置 \(NativePicoApp.displayName) 安装包：\(apkURL.path)"
+            nativePicoStatus = .failed("缺少安装包")
+            lastError = message
+            return false
+        }
+
+        nativePicoStatus = .installing
+        do {
+            try await client.installAPK(serial: serial, at: apkURL)
+            nativePicoStatus = .installed
+            return true
+        } catch {
+            nativePicoStatus = .failed("安装失败")
+            lastError = "安装 \(NativePicoApp.displayName) 失败：\(error.localizedDescription)"
+            return false
         }
     }
 
@@ -250,6 +358,13 @@ final class AppController: ObservableObject {
                 lastError = AdbError.noReadyDevice(summary).errorDescription
                 return
             }
+        }
+
+        // Install only when the package is absent. Reconnects reuse the
+        // installed APK and proceed directly to reverse/app launch.
+        busyMessage = "检查 \(NativePicoApp.displayName)…"
+        guard await ensureNativePicoInstalled(serial: serial, client: client) else {
+            return
         }
 
         // 相同会话只需确认 reverse 仍在并重新打开页面。不能重新判断“是否预先

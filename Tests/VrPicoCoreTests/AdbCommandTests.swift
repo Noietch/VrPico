@@ -67,6 +67,22 @@ final class AdbCommandTests: XCTestCase {
     func testDevicesListUsesLongFormat() {
         XCTAssertEqual(AdbCommand.devicesList(), ["devices", "-l"])
     }
+
+    func testPackagePathUsesTheSelectedDevice() {
+        XCTAssertEqual(
+            AdbCommand.packagePath(serial: "PA1", packageName: NativePicoApp.packageName),
+            ["-s", "PA1", "shell", "pm", "path", "org.eva.pico.input"]
+        )
+    }
+
+    func testInstallAPKUsesTheSelectedDeviceAndPreservesPath() {
+        let apk = URL(fileURLWithPath: "/tmp/EVA-PICO.apk")
+
+        XCTAssertEqual(
+            AdbCommand.installAPK(serial: "PA1", apkURL: apk),
+            ["-s", "PA1", "install", "-r", "/tmp/EVA-PICO.apk"]
+        )
+    }
 }
 
 final class AdbLocatorTests: XCTestCase {
