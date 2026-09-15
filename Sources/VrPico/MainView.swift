@@ -232,7 +232,14 @@ struct MainView: View {
 
             ForEach(devices) { device in
                 Button {
-                    Task { await controller.connectAndOpenPico(serial: device.serial) }
+                    Task {
+                        switch controller.pendingDeviceAction {
+                        case .connect:
+                            await controller.connectAndOpenPico(serial: device.serial)
+                        case .install:
+                            await controller.installNativePicoOnly(serial: device.serial)
+                        }
+                    }
                 } label: {
                     HStack {
                         Image(systemName: "arkit")
@@ -310,6 +317,19 @@ struct MainView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(controller.isBusy)
+
+            Button {
+                Task { await controller.installNativePicoOnly() }
+            } label: {
+                HStack {
+                    Image(systemName: "arrow.down.app")
+                    Text("安装 EVA-VR")
+                    Spacer()
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(controller.isBusy || !controller.canInstallNativePico)
+            .help(controller.canInstallNativePico ? "将内置 EVA-VR 安装到已授权的 PICO" : "请先用 USB 连接并授权 PICO")
 
             HStack(spacing: 8) {
                 Button {

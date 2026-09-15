@@ -23,6 +23,11 @@ enum NativePicoInstallStatus: Equatable {
     }
 }
 
+enum PendingDeviceAction {
+    case connect
+    case install
+}
+
 /// 全局状态与业务流程。
 ///
 /// 所有网络/进程操作都在这里发起，视图只负责展示和调用。
@@ -50,6 +55,7 @@ final class AppController: ObservableObject {
     @Published private(set) var lastError: String?
     /// 非 nil 时界面弹出设备选择框。多台设备时**不静默选第一台**。
     @Published var pendingDeviceChoice: [AdbDevice]?
+    @Published private(set) var pendingDeviceAction: PendingDeviceAction = .connect
     @Published private(set) var reverseEstablished = false
 
     private let store = AppSettingsStore()
@@ -290,6 +296,63 @@ final class AppController: ObservableObject {
         relay.map { Int($0.listenPort) }
     }
 
+    /// Whether the standalone install action can currently select a device.
+    var canInstallNativePico: Bool {
+        guard adbAvailable else { return false }
+        switch deviceSummary {
+        case .ready, .multipleReady:
+            return true
+        default:
+            return false
+        }
+    }
+
+    // MARK: - Install native EVA-VR
+
+    /// Install the bundled APK without starting the relay or launching EVA-VR.
+    /// This is useful when the headset is connected but the native app has not
+    /// been installed yet, and also provides a retry path after a failed install.
+    func installNativePicoOnly(serial explicitSerial: String? = nil) async {
+        guard !isBusy else { return }
+        lastError = nil
+        pendingDeviceChoice = nil
+        pendingDeviceAction = .install
+        isBusy = true
+        defer {
+            isBusy = false
+            busyMessage = ""
+        }
+
+        busyMessage = "检测 Pico…"
+        await refreshEnvironment()
+        guard adbAvailable, let client = adbClient else {
+            lastError = "App 内置的 ADB 无法运行。请重新下载或安装完整的 VrPico.app。"
+            return
+        }
+
+        let serial: String
+        if let explicitSerial, !explicitSerial.isEmpty {
+            serial = explicitSerial
+        } else {
+            switch deviceSummary {
+            case .ready(let device):
+                serial = device.serial
+            case .multipleReady(let devices):
+                pendingDeviceChoice = devices
+                return
+            default:
+                lastError = AdbError.noReadyDevice(deviceSummary).errorDescription
+                return
+            }
+        }
+
+        busyMessage = "安装/检查 \(NativePicoApp.displayName)…"
+        guard await ensureNativePicoInstalled(serial: serial, client: client) else {
+            return
+        }
+        await refreshDevices()
+    }
+
     // MARK: - One-click native EVA-VR launch
 
     /// Main action: relay the remote EVA node, establish adb reverse, and
@@ -298,6 +361,7 @@ final class AppController: ObservableObject {
         guard !isBusy else { return }
         lastError = nil
         pendingDeviceChoice = nil
+        pendingDeviceAction = .connect
 
         // 1. 校验设置
         // 整次操作都使用同一份快照，避免用户在 await 期间修改设置后得到一条
