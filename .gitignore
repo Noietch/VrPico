@@ -1,5 +1,6 @@
 .build/
 build/
+dist/
 __MACOSX/
 .DS_Store
 Resources/AppIcon.iconset/

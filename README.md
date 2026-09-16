@@ -52,8 +52,16 @@ substitute for VPN, firewall rules, or TLS on an untrusted network.
 ## Mac setup
 
 The distributed `.app` contains its own ADB binary and the tested
-`EVA-PICO v0.2.0` APK. No Android SDK, Homebrew, or manual APK installation is
+`EVA-VR v0.2.1` APK. No Android SDK, Homebrew, or manual APK installation is
 needed.
+
+Download `EVA-VR-macOS-v0.2.0.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
+unzip it, and open `VrPico.app`. The app is ad-hoc signed, not Apple notarized;
+macOS may require removing the quarantine attribute after downloading:
+
+```bash
+xattr -dr com.apple.quarantine VrPico.app
+```
 
 1. Enable USB debugging and accept the authorization prompt.
 2. Open settings and enter the EVA Client and Viser addresses as `IP:port`.
