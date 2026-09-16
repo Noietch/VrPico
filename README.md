@@ -52,10 +52,10 @@ substitute for VPN, firewall rules, or TLS on an untrusted network.
 ## Mac setup
 
 The distributed `.app` contains its own ADB binary and the tested
-`EVA-VR v0.2.3` APK. No Android SDK, Homebrew, or manual APK installation is
+`EVA-VR v0.2.4` APK. No Android SDK, Homebrew, or manual APK installation is
 needed.
 
-Download `EVA-VR-macOS-v0.2.1.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
+Download `EVA-VR-macOS-v0.2.2.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
 unzip it, and open `VrPico.app`. The app is ad-hoc signed, not Apple notarized;
 macOS may require removing the quarantine attribute after downloading:
 
@@ -85,6 +85,7 @@ VrPico checks the single authorized PICO every two seconds. If the headset is
 replaced, it automatically installs the bundled APK when needed, creates the
 new reverse mapping, and launches EVA-VR once the EVA node is reachable.
 To replace an older installed APK with the bundled build, use **安装 EVA-VR**.
+EVA-VR v0.2.4 matches the WebXR convention for thumbstick Y: up is negative.
 
 ## Build
 
