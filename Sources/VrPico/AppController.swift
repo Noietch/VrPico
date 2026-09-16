@@ -62,6 +62,9 @@ final class AppController: ObservableObject {
     private var relay: TcpRelay?
     private var refreshTimer: Timer?
     private var nativeStatusSerial: String?
+    private var refreshing = false
+    private var autoConnectEnabled = true
+    private var nextAutoConnectAt = Date.distantPast
 
     /// 正在运行的连接必须保存建立时的快照。设置和设备列表会继续变化，清理时不能
     /// 再从那些可变状态推测 serial、端口或 adb 路径。
@@ -70,7 +73,7 @@ final class AppController: ObservableObject {
         let serverHost: String
         let webxrPort: Int
         let adbExecutableURL: URL
-        var reverseWasPreexisting: Bool
+        var ownedReverseSerials: Set<String>
     }
 
     private var activeSession: ActiveVRSession?
@@ -87,20 +90,37 @@ final class AppController: ObservableObject {
     }
 
     func start() {
-        Task { await refreshEnvironment() }
+        Task { await periodicRefresh() }
         // 周期性刷新设备状态，让主界面「一直显示关键状态」。
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.periodicRefresh() }
         }
     }
 
     /// 定时刷新。内置 adb 暂时不可用时整轮重查，恢复后界面会自己变绿。
     private func periodicRefresh() async {
-        guard !isBusy else { return }
+        guard !isBusy, !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
         if adbLocation == nil {
             await refreshEnvironment()
         } else {
             await refreshDevices()
+        }
+        guard !isBusy, autoConnectEnabled else { return }
+        if case .ready(let device) = deviceSummary,
+           activeSession?.serial != device.serial,
+           Date() >= nextAutoConnectAt,
+           settings.validate().isEmpty {
+            let host = settings.trimmedServerHost
+            let nodeReady = activeSession != nil ? true : await StatusProbe.tcpReachable(
+                host: host, port: UInt16(AppSettings.defaultWebXRPort)
+            )
+            if nodeReady {
+                nextAutoConnectAt = Date().addingTimeInterval(10)
+                await connectAndOpenPico(serial: device.serial)
+                return
+            }
         }
         await refreshReverseStatus()
     }
@@ -206,15 +226,30 @@ final class AppController: ObservableObject {
     }
 
     private func refreshReverseStatus() async {
-        guard let session = activeSession else {
+        guard var session = activeSession else {
             reverseEstablished = false
             return
         }
         let client = AdbClient(executableURL: session.adbExecutableURL)
-        reverseEstablished = (try? await client.hasReverse(
-            serial: session.serial,
-            port: session.webxrPort
-        )) ?? false
+        guard case .ready(let device) = deviceSummary,
+              device.serial == session.serial else {
+            reverseEstablished = false
+            return
+        }
+
+        do {
+            if try !(await client.hasReverse(serial: device.serial, port: session.webxrPort)) {
+                try await client.addReverse(serial: device.serial, port: session.webxrPort)
+                session.ownedReverseSerials.insert(device.serial)
+            }
+            activeSession = session
+            reverseEstablished = true
+        } catch {
+            // A device can disappear between `adb devices` and `adb reverse`.
+            // The next refresh will retry it without interrupting the active session.
+            lastError = "建立 PICO ADB reverse 失败：\(error.localizedDescription)"
+            reverseEstablished = false
+        }
     }
 
     /// 设置界面「测试全部连接」。
@@ -433,6 +468,7 @@ final class AppController: ObservableObject {
     /// launch EVA-VR on PICO. `serial` is auto-discovered when possible.
     func connectAndOpenPico(serial explicitSerial: String? = nil) async {
         guard !isBusy else { return }
+        autoConnectEnabled = true
         lastError = nil
         pendingDeviceChoice = nil
         pendingDeviceAction = .connect
@@ -447,7 +483,7 @@ final class AppController: ObservableObject {
             return
         }
         isBusy = true
-        defer { isBusy = false }
+        defer { isBusy = false; busyMessage = "" }
 
         let host = requestedSettings.trimmedServerHost
         let nativePort = AppSettings.defaultWebXRPort
@@ -516,7 +552,7 @@ final class AppController: ObservableObject {
                 busyMessage = "检查 ADB reverse…"
                 if try await !sessionClient.hasReverse(serial: serial, port: active.webxrPort) {
                     try await sessionClient.addReverse(serial: serial, port: active.webxrPort)
-                    active.reverseWasPreexisting = false
+                    active.ownedReverseSerials.insert(serial)
                     activeSession = active
                 }
                 reverseEstablished = true
@@ -576,7 +612,7 @@ final class AppController: ObservableObject {
             serverHost: host,
             webxrPort: nativePort,
             adbExecutableURL: client.executableURL,
-            reverseWasPreexisting: reverseWasPreexisting
+            ownedReverseSerials: reverseWasPreexisting ? [] : [serial]
         )
 
         // 9. Launch native app
@@ -620,6 +656,7 @@ final class AppController: ObservableObject {
 
     func disconnectVR() async {
         guard !isBusy else { return }
+        autoConnectEnabled = false
         isBusy = true
         defer { isBusy = false }
 
@@ -634,12 +671,16 @@ final class AppController: ObservableObject {
         activeSession = nil
         reverseEstablished = false
 
-        if let session, !session.reverseWasPreexisting {
+        if let session {
             let client = AdbClient(executableURL: session.adbExecutableURL)
-            do {
-                try await client.removeReverse(serial: session.serial, port: session.webxrPort)
-            } catch {
-                lastError = "清理 ADB reverse 失败：\(error.localizedDescription)"
+            let attached = Set(((try? await client.devices()) ?? []).filter { $0.state == .device }.map(\.serial))
+            for serial in session.ownedReverseSerials {
+                guard attached.contains(serial) else { continue }
+                do {
+                    try await client.removeReverse(serial: serial, port: session.webxrPort)
+                } catch {
+                    lastError = "清理 ADB reverse 失败：\(error.localizedDescription)"
+                }
             }
         }
 
@@ -656,6 +697,8 @@ final class AppController: ObservableObject {
     /// App 退出前调用：关掉监听并清掉自己建立的 reverse 映射。ADB 5037
     /// is shared with the system and must stay running.
     func cleanupBeforeQuit() {
+        autoConnectEnabled = false
+        refreshTimer?.invalidate()
         let session = activeSession
         let adbExecutableURL = session?.adbExecutableURL ?? adbLocation?.url
         if let adbExecutableURL {
@@ -663,8 +706,12 @@ final class AppController: ObservableObject {
             let semaphore = DispatchSemaphore(value: 0)
             let client = AdbClient(executableURL: adbExecutableURL)
             Task.detached {
-                if let session, !session.reverseWasPreexisting {
-                    try? await client.removeReverse(serial: session.serial, port: session.webxrPort)
+                if let session {
+                    let attached = Set(((try? await client.devices()) ?? []).filter { $0.state == .device }.map(\.serial))
+                    for serial in session.ownedReverseSerials {
+                        guard attached.contains(serial) else { continue }
+                        try? await client.removeReverse(serial: serial, port: session.webxrPort)
+                    }
                 }
                 semaphore.signal()
             }

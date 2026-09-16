@@ -52,10 +52,10 @@ substitute for VPN, firewall rules, or TLS on an untrusted network.
 ## Mac setup
 
 The distributed `.app` contains its own ADB binary and the tested
-`EVA-VR v0.2.1` APK. No Android SDK, Homebrew, or manual APK installation is
+`EVA-VR v0.2.3` APK. No Android SDK, Homebrew, or manual APK installation is
 needed.
 
-Download `EVA-VR-macOS-v0.2.0.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
+Download `EVA-VR-macOS-v0.2.1.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
 unzip it, and open `VrPico.app`. The app is ad-hoc signed, not Apple notarized;
 macOS may require removing the quarantine attribute after downloading:
 
@@ -74,13 +74,16 @@ The app will:
 3. Install the bundled `EVA-PICO.apk` only when the package is missing.
 4. Start or verify the EVA native teleop service.
 5. Start a Mac TCP relay only when EVA is remote; local EVA connects directly.
-6. Create `adb reverse tcp:43876 tcp:43876`.
-7. Launch `org.eva.pico.input/.MainActivity` once.
+6. Create `adb reverse tcp:43876 tcp:43876` when it is missing.
+7. Launch `org.eva.pico.input/.MainActivity`.
 8. Pass `ws://127.0.0.1:43876/ws?token=eva` to the native APK.
 
 The main status panel only shows the EVA service, PICO, and EVA-VR states.
 ADB, port forwarding, and relay details are handled automatically. Reconnecting
 an already installed PICO skips `adb install` and reuses the existing setup.
+VrPico checks the single authorized PICO every two seconds. If the headset is
+replaced, it automatically installs the bundled APK when needed, creates the
+new reverse mapping, and launches EVA-VR once the EVA node is reachable.
 To replace an older installed APK with the bundled build, use **安装 EVA-VR**.
 
 ## Build
@@ -97,7 +100,8 @@ binary and does not require Android Studio, Unity, or a separate runtime.
 
 - **Remote port unreachable**: confirm the remote node uses `--host 0.0.0.0`,
   the port is open, and the Mac is on the required VPN.
-- **PICO unauthorized**: confirm USB debugging in the headset.
+- **PICO unauthorized**: confirm USB debugging in the headset. After you accept
+  the authorization prompt, VrPico adopts the new PICO automatically.
 - **No input**: confirm `EVA-VR` is installed and that Operation is started in
   EVA-CLIENT. The native input service uses port `43876`.
 - **No vibration**: vibration is sent only when EVA emits an explicit
