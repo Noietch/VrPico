@@ -119,6 +119,16 @@ public struct AdbClient: Sendable {
         let arguments = AdbCommand.packagePath(serial: serial, packageName: packageName)
         let result = try await run(arguments)
         guard result.succeeded else {
+            // Android's `pm path` returns exit code 1 when the package does not
+            // exist. That is a normal "not installed" result, not an ADB
+            // transport failure. Keep throwing for actual adb/device errors.
+            let output = (result.stdout + "\n" + result.stderr).lowercased()
+            let packageMissing = output.contains("unable to find package")
+                || output.contains("package not found")
+                || (result.exitCode == 1 && output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if packageMissing {
+                return false
+            }
             throw AdbError.commandFailed(arguments: arguments, result: result)
         }
         return result.stdout.split(whereSeparator: \.isNewline).contains {
