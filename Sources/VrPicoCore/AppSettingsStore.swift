@@ -23,7 +23,17 @@ public final class AppSettingsStore {
             return .default
         }
         do {
-            return try JSONDecoder().decode(AppSettings.self, from: data)
+            var settings = try JSONDecoder().decode(AppSettings.self, from: data)
+            // EVA-VR has one fixed native endpoint. Older builds exposed this
+            // field and may have persisted the fake robot ZMQ port (5555).
+            // Migrate it here so hidden legacy state can never redirect PICO.
+            if settings.webxrPort != AppSettings.defaultWebXRPort
+                || settings.webxrMode != AppSettings.defaultWebXRMode {
+                settings.webxrPort = AppSettings.defaultWebXRPort
+                settings.webxrMode = AppSettings.defaultWebXRMode
+                saveSettings(settings)
+            }
+            return settings
         } catch {
             // 结构变更导致旧数据解不开时不能让 App 起不来，退回默认值。
             return .default

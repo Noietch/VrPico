@@ -6,6 +6,8 @@
 	<string>zh_CN</string>
 	<key>CFBundleExecutable</key>
 	<string>VrPico</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.eva.vrpico</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -13,7 +15,7 @@
 	<key>CFBundleName</key>
 	<string>VrPico</string>
 	<key>CFBundleDisplayName</key>
-	<string>EVA-VR Relay</string>
+	<string>EVA-VR</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

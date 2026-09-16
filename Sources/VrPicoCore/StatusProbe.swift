@@ -157,9 +157,7 @@ public enum StatusProbe {
             return await httpStatus(url: url)
         }()
         async let webxrTask: ProbeResult = {
-            guard let port = UInt16(exactly: settings.webxrPort) else {
-                return .failed(reason: "端口需要 1–65535")
-            }
+            let port = UInt16(AppSettings.defaultWebXRPort)
             let reachable = await tcpReachable(host: host, port: port)
             return reachable ? .ok(detail: "端口可达") : .failed(reason: "连不上")
         }()

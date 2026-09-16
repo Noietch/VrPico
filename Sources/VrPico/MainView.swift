@@ -27,7 +27,7 @@ struct StatusRow: View {
                 .offset(y: -1)
 
             Text(label)
-                .frame(width: 96, alignment: .leading)
+                .frame(width: 78, alignment: .leading)
                 .foregroundStyle(.secondary)
 
             Text(value)
@@ -74,7 +74,7 @@ struct MainView: View {
             actions
         }
         .padding(14)
-        .frame(width: 360)
+        .frame(width: 340)
     }
 
     // MARK: - 头部
@@ -82,9 +82,9 @@ struct MainView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("EVA-VR Relay")
+                Text("EVA-VR")
                     .font(.system(size: 13, weight: .semibold))
-                Text(settings.trimmedServerHost.isEmpty ? "未配置服务器" : settings.trimmedServerHost)
+                Text(settings.clientEndpoint.isEmpty ? "未配置 EVA Client" : settings.clientEndpoint)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -108,33 +108,12 @@ struct MainView: View {
     private var statusList: some View {
         VStack(alignment: .leading, spacing: 6) {
             StatusRow(
-                label: "Client API",
-                value: controller.serverStatus.client.displayText,
-                level: level(for: controller.serverStatus.client)
+                label: "EVA 服务",
+                value: evaServiceText,
+                level: evaServiceLevel
             )
             StatusRow(
-                label: "Viser",
-                value: controller.serverStatus.viser.displayText,
-                level: level(for: controller.serverStatus.viser)
-            )
-            StatusRow(
-                label: "EVA-VR Server",
-                value: controller.serverStatus.webxr.displayText,
-                level: level(for: controller.serverStatus.webxr)
-            )
-
-            StatusRow(
-                label: "本地 Relay",
-                value: relayText,
-                level: relayLevel
-            )
-            StatusRow(
-                label: "ADB",
-                value: adbText,
-                level: controller.adbAvailable ? .ok : .failed
-            )
-            StatusRow(
-                label: "Pico",
+                label: "PICO",
                 value: picoText,
                 level: picoLevel
             )
@@ -143,39 +122,26 @@ struct MainView: View {
                 value: controller.nativePicoStatus.displayText,
                 level: nativePicoLevel
             )
-            StatusRow(
-                label: "ADB reverse",
-                value: controller.reverseText,
-                level: controller.reverseEstablished ? .ok : .idle
-            )
-            StatusRow(
-                label: "VR 数据通道",
-                value: controller.webxrChannelText,
-                level: controller.relayStats.hasTraffic ? .ok : .idle
-            )
-
-            if controller.relayStats.isRunning {
-                Text("连接 \(controller.relayStats.activeConnections) · 累计上行 \(byteText(controller.relayStats.bytesToUpstream)) · 下行 \(byteText(controller.relayStats.bytesToClient))")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
-    private var relayText: String {
-        if controller.relayStats.isRunning {
-            return "运行中 · 127.0.0.1:\(controller.relayListenPort ?? settings.webxrPort)"
+    private var evaServiceText: String {
+        if controller.relayStats.hasTraffic { return "已连接" }
+        if controller.isBusy { return "连接中…" }
+        if controller.reverseEstablished { return "通道就绪" }
+        switch controller.serverStatus.webxr {
+        case .ok: return "可连接"
+        case .failed(let reason): return reason
+        case .checking: return "检查中…"
+        case .unknown: return "未连接"
         }
-        return "未启动"
     }
 
-    private var relayLevel: StatusRow.Level {
-        controller.relayStats.isRunning ? .ok : .idle
-    }
-
-    private var adbText: String {
-        guard let location = controller.adbLocation else { return "内置组件不可用" }
-        return location.sourceDescription
+    private var evaServiceLevel: StatusRow.Level {
+        if controller.relayStats.hasTraffic { return .ok }
+        if controller.isBusy { return .working }
+        if controller.reverseEstablished { return .ok }
+        return level(for: controller.serverStatus.webxr)
     }
 
     private var picoText: String {
@@ -214,12 +180,6 @@ struct MainView: View {
         case .checking: return .working
         case .unknown: return .idle
         }
-    }
-
-    private func byteText(_ bytes: Int) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .binary
-        return formatter.string(fromByteCount: Int64(bytes))
     }
 
     // MARK: - 设备选择
@@ -329,7 +289,7 @@ struct MainView: View {
             }
             .buttonStyle(.bordered)
             .disabled(controller.isBusy || !controller.canInstallNativePico)
-            .help(controller.canInstallNativePico ? "将内置 EVA-VR 安装到已授权的 PICO" : "请先用 USB 连接并授权 PICO")
+            .help(controller.canInstallNativePico ? "点击后检查并安装 EVA-VR" : "请先用 USB 连接并授权 PICO")
 
             HStack(spacing: 8) {
                 Button {
@@ -351,17 +311,6 @@ struct MainView: View {
             .controlSize(.small)
 
             HStack {
-                Button("测试连接") {
-                    Task { await controller.testServerConnections() }
-                }
-                .controlSize(.small)
-
-                Button("断开 VR") {
-                    Task { await controller.disconnectVR() }
-                }
-                .controlSize(.small)
-                .disabled(controller.isBusy || !controller.relayStats.isRunning)
-
                 Spacer()
 
                 Button("退出") {

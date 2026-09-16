@@ -21,6 +21,7 @@ ADB_VERSION="37.0.1"
 ADB_SOURCE="$ROOT/Vendor/android-platform-tools/$ADB_VERSION/adb"
 ADB_SHA256="1811e253b21b12cbfda7201ebaf86c10e7ddcb5c606a7a81f7c82b4c429c2d3b"
 PICO_APK_SOURCE="$ROOT/Resources/EVA-PICO.apk"
+APP_ICON_SOURCE="$ROOT/Resources/AppIcon.icns"
 
 DO_RUN=0
 DO_ZIP=0
@@ -49,6 +50,11 @@ if [[ ! -r "$PICO_APK_SOURCE" ]]; then
     exit 1
 fi
 
+if [[ ! -r "$APP_ICON_SOURCE" ]]; then
+    echo "缺少 App 图标: $APP_ICON_SOURCE" >&2
+    exit 1
+fi
+
 ACTUAL_ADB_SHA256="$(shasum -a 256 "$ADB_SOURCE" | awk '{print $1}')"
 if [[ "$ACTUAL_ADB_SHA256" != "$ADB_SHA256" ]]; then
     echo "内置 ADB 校验失败，期望 $ADB_SHA256，实际 $ACTUAL_ADB_SHA256" >&2
@@ -74,6 +80,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 cp -X "$ADB_SOURCE" "$APP/Contents/Helpers/adb"
 cp -X "$PICO_APK_SOURCE" "$APP/Contents/Resources/EVA-PICO.apk"
+cp -X "$APP_ICON_SOURCE" "$APP/Contents/Resources/AppIcon.icns"
 chmod 755 "$APP/Contents/Helpers/adb"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"

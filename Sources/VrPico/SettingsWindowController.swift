@@ -29,12 +29,12 @@ final class SettingsWindowController {
         if window == nil {
             let hosting = NSHostingView(rootView: SettingsView(controller: controller))
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 640),
+                contentRect: NSRect(x: 0, y: 0, width: 420, height: 250),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false
             )
-            window.title = "VR Pico 设置"
+            window.title = "EVA-VR 设置"
             window.contentView = hosting
             window.center()
             // 关掉后系统不要释放，否则第二次打开要重建，位置也会重置。

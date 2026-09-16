@@ -40,8 +40,11 @@ public enum AdbError: Error, LocalizedError {
 /// adb 的调用封装。
 public struct AdbClient: Sendable {
 
-    /// 使用独立端口，避免连接或控制系统、Homebrew、Android Studio 启动的 ADB server。
-    public static let bundledServerPort: UInt16 = 5038
+    /// Share Android's standard ADB server. A single server must own the USB
+    /// transport; running a second server on 5038 makes the two sides race for
+    /// the same headset and produces intermittent "device not found" errors.
+    public static let standardServerPort: UInt16 = 5037
+    public static let legacyBundledServerPort: UInt16 = 5038
 
     public let executableURL: URL
     public let defaultTimeout: TimeInterval
@@ -50,7 +53,7 @@ public struct AdbClient: Sendable {
     public init(
         executableURL: URL,
         defaultTimeout: TimeInterval = 20,
-        serverPort: UInt16 = Self.bundledServerPort
+        serverPort: UInt16 = Self.standardServerPort
     ) {
         self.executableURL = executableURL
         self.defaultTimeout = defaultTimeout
@@ -80,7 +83,8 @@ public struct AdbClient: Sendable {
         return result.succeeded
     }
 
-    /// 只关闭内置 ADB 使用的独立 server，不触碰系统默认的 5037 端口。
+    /// Stop the explicitly selected server. Callers must not use this on the
+    /// shared standard 5037 server.
     public func killServer() async throws {
         let arguments = AdbCommand.killServer()
         let result = try await run(arguments, timeout: 10)

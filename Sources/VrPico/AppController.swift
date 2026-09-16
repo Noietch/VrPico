@@ -61,7 +61,7 @@ final class AppController: ObservableObject {
     private let store = AppSettingsStore()
     private var relay: TcpRelay?
     private var refreshTimer: Timer?
-    private var autoInstallAttemptedSerial: String?
+    private var nativeStatusSerial: String?
 
     /// 正在运行的连接必须保存建立时的快照。设置和设备列表会继续变化，清理时不能
     /// 再从那些可变状态推测 serial、端口或 adb 路径。
@@ -115,6 +115,14 @@ final class AppController: ObservableObject {
             deviceSummary = .noDevices
             return
         }
+        // Older VrPico builds used a private server on 5038. Stop it before
+        // touching 5037 so only one ADB daemon can own the USB headset.
+        let legacyClient = AdbClient(
+            executableURL: location.url,
+            serverPort: AdbClient.legacyBundledServerPort
+        )
+        try? await legacyClient.killServer()
+
         let client = AdbClient(executableURL: location.url)
         adbAvailable = await client.isAvailable()
         guard adbAvailable else {
@@ -123,11 +131,11 @@ final class AppController: ObservableObject {
         }
         do {
             deviceSummary = try await client.deviceSummary()
-            await refreshNativePicoStatus(using: client)
+            resetNativeStatusIfDeviceChanged()
         } catch {
             deviceSummary = .noDevices
             nativePicoStatus = .unknown
-            autoInstallAttemptedSerial = nil
+            nativeStatusSerial = nil
         }
     }
 
@@ -135,59 +143,32 @@ final class AppController: ObservableObject {
         guard adbAvailable, let client = adbClient else { return }
         do {
             deviceSummary = try await client.deviceSummary()
-            await refreshNativePicoStatus(using: client)
+            resetNativeStatusIfDeviceChanged()
         } catch {
             // 轮询失败不打断用户操作，只更新状态。
             deviceSummary = .noDevices
             nativePicoStatus = .unknown
-            autoInstallAttemptedSerial = nil
+            nativeStatusSerial = nil
         }
     }
 
-    /// Check the native client as soon as a ready PICO appears. The first
-    /// missing-package check also installs the bundled APK automatically;
-    /// failures are remembered until the device disconnects so polling does
-    /// not repeatedly launch adb install.
-    private func refreshNativePicoStatus(using client: AdbClient) async {
-        let serial: String
+    /// USB discovery may run periodically, but APK inspection is user-driven.
+    /// Only clear a previous result when the attached device actually changes.
+    private func resetNativeStatusIfDeviceChanged() {
         switch deviceSummary {
         case .ready(let device):
-            serial = device.serial
-        case .multipleReady:
-            nativePicoStatus = .unknown
-            return
-        case .noDevices, .unauthorized, .offline, .other:
-            nativePicoStatus = .unknown
-            autoInstallAttemptedSerial = nil
-            return
-        }
-
-        let previousStatus = nativePicoStatus
-        nativePicoStatus = .checking
-        do {
-            let installed = try await client.isPackageInstalled(serial: serial)
-            if installed {
-                nativePicoStatus = .installed
-                autoInstallAttemptedSerial = nil
-            } else {
-                if autoInstallAttemptedSerial == serial {
-                    if case .failed = previousStatus {
-                        nativePicoStatus = previousStatus
-                    } else {
-                        nativePicoStatus = .missing
-                    }
-                    return
-                }
-                nativePicoStatus = .missing
-                autoInstallAttemptedSerial = serial
-                _ = await installNativePico(serial: serial, client: client)
+            if nativeStatusSerial != device.serial {
+                nativePicoStatus = .unknown
+                nativeStatusSerial = nil
             }
-        } catch {
-            nativePicoStatus = .failed("检查失败")
+        case .multipleReady, .noDevices, .unauthorized, .offline, .other:
+            nativePicoStatus = .unknown
+            nativeStatusSerial = nil
         }
     }
 
     private func ensureNativePicoInstalled(serial: String, client: AdbClient) async -> Bool {
+        nativeStatusSerial = serial
         nativePicoStatus = .checking
         do {
             if try await client.isPackageInstalled(serial: serial) {
@@ -261,10 +242,7 @@ final class AppController: ObservableObject {
 
     func testWebXR() async {
         serverStatus.webxr = .checking
-        guard let port = UInt16(exactly: settings.webxrPort) else {
-            serverStatus.webxr = .failed(reason: "端口需要 1–65535")
-            return
-        }
+        let port = UInt16(AppSettings.defaultWebXRPort)
         let reachable = await StatusProbe.tcpReachable(
             host: settings.trimmedServerHost,
             port: port
@@ -346,14 +324,110 @@ final class AppController: ObservableObject {
             }
         }
 
-        busyMessage = "安装/检查 \(NativePicoApp.displayName)…"
-        guard await ensureNativePicoInstalled(serial: serial, client: client) else {
-            return
-        }
+        // This is an explicit install action. Always use `adb install -r` so
+        // a rebuilt APK with the same package/version can replace an older
+        // bundled build instead of being skipped by the package-exists check.
+        busyMessage = "安装 \(NativePicoApp.displayName)…"
+        guard await installNativePico(serial: serial, client: client) else { return }
         await refreshDevices()
     }
 
     // MARK: - One-click native EVA-VR launch
+
+    private func consoleRequest(
+        settings: AppSettings,
+        path: String,
+        method: String = "GET",
+        body: [String: String]? = nil
+    ) async throws -> [String: Any] {
+        guard let baseURL = settings.clientURL else {
+            throw NSError(domain: "VrPico", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "EVA Client 地址无效",
+            ])
+        }
+        let url = baseURL.appendingPathComponent(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 5
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [:]
+        let session = URLSession(configuration: configuration)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw NSError(domain: "VrPico", code: status, userInfo: [
+                NSLocalizedDescriptionKey: "EVA Client API 返回 HTTP \(status)",
+            ])
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "VrPico", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "EVA Client API 返回了无效数据",
+            ])
+        }
+        if json["ok"] as? Bool == false {
+            throw NSError(domain: "VrPico", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: json["error"] as? String ?? "EVA Client 拒绝了请求",
+            ])
+        }
+        return json
+    }
+
+    /// The console process on port 8080 and the native VR WebSocket node are
+    /// separate. Start the selected native teleop component through the console
+    /// API before probing 43876, so opening VrPico is enough for local use.
+    private func ensureNativeTeleopStarted(_ requestedSettings: AppSettings) async throws {
+        let host = requestedSettings.trimmedServerHost
+        let nativePort = UInt16(AppSettings.defaultWebXRPort)
+        if await StatusProbe.tcpReachable(host: host, port: nativePort) { return }
+
+        var status = try await consoleRequest(
+            settings: requestedSettings,
+            path: "api/device_settings"
+        )
+        let processes = status["processes"] as? [String: Any]
+        let operation = (status["operations"] as? [String: Any])?["teleop"] as? [String: Any]
+        let operationState = operation?["state"] as? String
+        let running = processes?["teleop"] is NSNull
+        let starting = operationState == "queued" || operationState == "starting"
+
+        if !running && !starting {
+            _ = try await consoleRequest(
+                settings: requestedSettings,
+                path: "api/device_start",
+                method: "POST",
+                body: ["component": "teleop"]
+            )
+        }
+
+        for _ in 0..<80 {
+            if await StatusProbe.tcpReachable(host: host, port: nativePort) { return }
+            try await Task.sleep(nanoseconds: 250_000_000)
+            status = try await consoleRequest(
+                settings: requestedSettings,
+                path: "api/device_settings"
+            )
+            if let teleop = (status["operations"] as? [String: Any])?["teleop"] as? [String: Any],
+               teleop["state"] as? String == "failed" {
+                throw NSError(domain: "VrPico", code: 4, userInfo: [
+                    NSLocalizedDescriptionKey: teleop["error"] as? String
+                        ?? status["error"] as? String
+                        ?? "EVA-VR teleop 启动失败",
+                ])
+            }
+        }
+        throw NSError(domain: "VrPico", code: 5, userInfo: [
+            NSLocalizedDescriptionKey: "EVA-VR teleop 已请求启动，但 43876 端口未就绪",
+        ])
+    }
+
+    private func requiresRelay(for host: String) -> Bool {
+        !["127.0.0.1", "localhost", "::1"].contains(host.lowercased())
+    }
 
     /// Main action: relay the remote EVA node, establish adb reverse, and
     /// launch EVA-VR on PICO. `serial` is auto-discovered when possible.
@@ -376,19 +450,17 @@ final class AppController: ObservableObject {
         defer { isBusy = false }
 
         let host = requestedSettings.trimmedServerHost
-        guard let webxrPort = UInt16(exactly: requestedSettings.webxrPort) else {
-            lastError = "EVA-VR 端口需要 1–65535"
-            return
-        }
+        let nativePort = AppSettings.defaultWebXRPort
+        let webxrPort = UInt16(nativePort)
 
-        // 2. The remote native WebSocket node must be reachable.
-        busyMessage = "检查服务器 \(host):\(webxrPort)…"
-        guard await StatusProbe.tcpReachable(host: host, port: webxrPort) else {
+        // 2. The console is not the VR data channel. Ask it to start the native
+        // teleop component, then verify the fixed EVA-VR port.
+        busyMessage = "启动 EVA-VR 服务…"
+        do {
+            try await ensureNativeTeleopStarted(requestedSettings)
+        } catch {
             serverStatus.webxr = .failed(reason: "连不上")
-            lastError = """
-                连不上 \(host):\(webxrPort)。
-                请确认远端 EVA-CLIENT node 已用 --host 0.0.0.0 启动，且本机能访问服务器。
-                """
+            lastError = error.localizedDescription
             return
         }
         serverStatus.webxr = .ok(detail: "端口可达")
@@ -436,9 +508,9 @@ final class AppController: ObservableObject {
         if var active = activeSession,
            active.serial == serial,
            active.serverHost == host,
-           active.webxrPort == requestedSettings.webxrPort,
+           active.webxrPort == nativePort,
            active.adbExecutableURL == client.executableURL,
-           relay != nil {
+           (requiresRelay(for: host) ? relay != nil : relay == nil) {
             do {
                 let sessionClient = AdbClient(executableURL: active.adbExecutableURL)
                 busyMessage = "检查 ADB reverse…"
@@ -468,13 +540,16 @@ final class AppController: ObservableObject {
             await tearDownActiveSession()
         }
 
-        // 7. 启动 Relay
-        busyMessage = "启动本地 Relay…"
-        do {
-            try await startRelay(host: host, port: webxrPort)
-        } catch {
-            lastError = error.localizedDescription
-            return
+        // 7. Remote servers need a Mac-side relay. For a local EVA process,
+        // adb reverse can target 43876 directly and no listener may take it.
+        if requiresRelay(for: host) {
+            busyMessage = "启动本地 Relay…"
+            do {
+                try await startRelay(host: host, port: webxrPort)
+            } catch {
+                lastError = error.localizedDescription
+                return
+            }
         }
 
         // 8. ADB reverse
@@ -484,10 +559,10 @@ final class AppController: ObservableObject {
             // 查询失败时不能假定映射不存在，否则可能覆盖并最终删除别人的映射。
             reverseWasPreexisting = try await client.hasReverse(
                 serial: serial,
-                port: requestedSettings.webxrPort
+                port: nativePort
             )
             if !reverseWasPreexisting {
-                try await client.addReverse(serial: serial, port: requestedSettings.webxrPort)
+                try await client.addReverse(serial: serial, port: nativePort)
             }
             reverseEstablished = true
         } catch {
@@ -499,7 +574,7 @@ final class AppController: ObservableObject {
         activeSession = ActiveVRSession(
             serial: serial,
             serverHost: host,
-            webxrPort: requestedSettings.webxrPort,
+            webxrPort: nativePort,
             adbExecutableURL: client.executableURL,
             reverseWasPreexisting: reverseWasPreexisting
         )
@@ -578,7 +653,8 @@ final class AppController: ObservableObject {
         relayStats = RelayStats()
     }
 
-    /// App 退出前调用：关掉监听、清掉自己建的映射和内置 ADB server。
+    /// App 退出前调用：关掉监听并清掉自己建立的 reverse 映射。ADB 5037
+    /// is shared with the system and must stay running.
     func cleanupBeforeQuit() {
         let session = activeSession
         let adbExecutableURL = session?.adbExecutableURL ?? adbLocation?.url
@@ -590,7 +666,6 @@ final class AppController: ObservableObject {
                 if let session, !session.reverseWasPreexisting {
                     try? await client.removeReverse(serial: session.serial, port: session.webxrPort)
                 }
-                try? await client.killServer()
                 semaphore.signal()
             }
             _ = semaphore.wait(timeout: .now() + 5)
@@ -605,6 +680,17 @@ final class AppController: ObservableObject {
     func openClient() {
         guard let url = settings.clientURL else { return }
         NSWorkspace.shared.open(url)
+
+        // Opening the EVA console is also a convenient direct-entry path for
+        // native PICO use. Do not make the browser button fail when no headset
+        // is attached; in that case it remains a normal browser shortcut.
+        guard !isBusy, !settings.trimmedServerHost.isEmpty else { return }
+        switch deviceSummary {
+        case .ready, .multipleReady:
+            Task { await connectAndOpenPico() }
+        default:
+            break
+        }
     }
 
     func openViser() {

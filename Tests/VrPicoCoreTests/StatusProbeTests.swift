@@ -3,8 +3,8 @@ import XCTest
 
 final class StatusProbeTests: XCTestCase {
 
-    /// 设置界面允许端口暂时处于编辑中的非法值，探测必须返回错误而不是在
-    /// Int -> UInt16 转换时触发 fatal error。
+    /// Invalid console/Viser ports must fail without crashing. The native
+    /// input port is fixed and ignores the legacy persisted WebXR port.
     func testProbeServerRejectsOutOfRangePortsWithoutCrashing() async {
         let settings = AppSettings(
             serverHost: "127.0.0.1",
@@ -19,6 +19,6 @@ final class StatusProbeTests: XCTestCase {
 
         XCTAssertEqual(result.client, .failed(reason: "地址无效"))
         XCTAssertEqual(result.viser, .failed(reason: "地址无效"))
-        XCTAssertEqual(result.webxr, .failed(reason: "端口需要 1–65535"))
+        XCTAssertNotEqual(result.webxr, .failed(reason: "端口需要 1–65535"))
     }
 }

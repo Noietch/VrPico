@@ -9,7 +9,7 @@ struct VrPicoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("EVA-VR Relay", systemImage: "link.circle.fill") {
+        MenuBarExtra("EVA-VR", systemImage: "visionpro") {
             MainView(controller: appDelegate.controller)
         }
         .menuBarExtraStyle(.window)
@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // 清理自己的 Relay、ADB reverse 和独立端口上的内置 ADB server。
+        // 清理自己的 Relay 和 ADB reverse；共享的 5037 ADB server 保持运行。
         // 强制退出（Force Quit）不会走到这里，所以 cleanup 是尽力而为。
         controller.cleanupBeforeQuit()
     }
