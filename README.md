@@ -39,7 +39,7 @@ connect, so VrPico works with both token modes:
   the live value to the APK, so restarting the node does not strand the headset.
 
 VrPico hands the endpoint to the APK through
-`am start --es server_url 'ws://127.0.0.1:43876/ws?token=<live>'`. EVA-VR v0.2.4
+`am start --es server_url 'ws://127.0.0.1:43876/ws?token=<live>'`. EVA-VR v0.2.5
 reads that extra; older builds hardcoded `token=eva` and will be rejected with
 `401 Unauthorized` against a `--token-stdin` node.
 
@@ -82,10 +82,10 @@ substitute for VPN, firewall rules, or TLS on an untrusted network.
 ## Mac setup
 
 The distributed `.app` contains its own ADB binary and the tested
-`EVA-VR v0.2.4` APK. No Android SDK, Homebrew, or manual APK installation is
+`EVA-VR v0.2.5` APK. No Android SDK, Homebrew, or manual APK installation is
 needed.
 
-Download `EVA-VR-macOS-v0.2.2.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
+Download `EVA-VR-macOS-v0.2.3.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
 unzip it, and open `VrPico.app`. The app is ad-hoc signed, not Apple notarized;
 macOS may require removing the quarantine attribute after downloading:
 
@@ -106,7 +106,7 @@ The app will:
 5. Start a Mac TCP relay only when EVA is remote; local EVA connects directly.
 6. Create `adb reverse tcp:43876 tcp:43876` when it is missing.
 7. Launch `org.eva.pico.input/.MainActivity`.
-8. Pass `ws://127.0.0.1:43876/ws?token=eva` to the native APK.
+8. Pass `ws://127.0.0.1:43876/ws?token=<live>` to the native APK.
 
 The main status panel only shows the EVA service, PICO, and EVA-VR states.
 ADB, port forwarding, and relay details are handled automatically. Reconnecting
@@ -115,7 +115,7 @@ VrPico checks the single authorized PICO every two seconds. If the headset is
 replaced, it automatically installs the bundled APK when needed, creates the
 new reverse mapping, and launches EVA-VR once the EVA node is reachable.
 To replace an older installed APK with the bundled build, use **安装 EVA-VR**.
-EVA-VR v0.2.4 matches the WebXR convention for thumbstick Y: up is negative.
+EVA-VR v0.2.5 matches the WebXR convention for thumbstick Y: up is negative.
 
 ## Build
 
@@ -133,7 +133,7 @@ binary and does not require Android Studio, Unity, or a separate runtime.
   the port is open, and the Mac is on the required VPN. If `43876` is firewalled
   but the console answers on `8415`, use your own SSH tunnel (above).
 - **Headset keeps reconnecting / node logs `401 Unauthorized`**: the APK is
-  older than v0.2.4 and hardcodes `token=eva`. Reinstall with **安装 EVA-VR**;
+  older than v0.2.5 and hardcodes `token=eva`. Reinstall with **安装 EVA-VR**;
   a `--token-stdin` node mints a random token the old build cannot know.
 - **Node logs `400 Bad Request` in a loop**: something is opening TCP to
   `43876` without a WebSocket handshake. VrPico probes with a real handshake

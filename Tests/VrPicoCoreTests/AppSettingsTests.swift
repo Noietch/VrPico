@@ -90,7 +90,7 @@ final class AppSettingsTests: XCTestCase {
 
     /// The reported bundle version has to track the APK actually shipped.
     func testBundledVersionMatchesShippedAPK() {
-        XCTAssertEqual(NativePicoApp.bundledVersionName, "0.2.4")
+        XCTAssertEqual(NativePicoApp.bundledVersionName, "0.2.5")
     }
 
     func testDefaultIsInvalidUntilHostIsFilledIn() {
