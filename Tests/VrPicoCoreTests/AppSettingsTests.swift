@@ -42,6 +42,57 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(custom.picoNativeWebSocketURL(), "ws://127.0.0.1:43876/ws?token=eva")
     }
 
+    // MARK: - Native token discovery
+
+    /// `--token-stdin` nodes mint a random token per start. It has to come from
+    /// the console's `browser_url`, otherwise the APK is rejected with 401.
+    func testTokenIsReadFromConsoleBrowserURL() {
+        let browserURL = "http://127.0.0.1:43876/?token=T-1ldIWoPr2wgrzNy7ejUsjHBCTpNl_n"
+
+        XCTAssertEqual(
+            AppSettings.token(fromBrowserURL: browserURL),
+            "T-1ldIWoPr2wgrzNy7ejUsjHBCTpNl_n"
+        )
+    }
+
+    /// Tokens are URL-encoded by the console; the APK needs the decoded value.
+    func testTokenIsPercentDecoded() {
+        let browserURL = "http://127.0.0.1:43876/?token=a%26b%3Dc"
+
+        XCTAssertEqual(AppSettings.token(fromBrowserURL: browserURL), "a&b=c")
+    }
+
+    func testTokenDiscoveryRejectsUnusableInput() {
+        XCTAssertNil(AppSettings.token(fromBrowserURL: ""))
+        XCTAssertNil(AppSettings.token(fromBrowserURL: "   "))
+        XCTAssertNil(AppSettings.token(fromBrowserURL: "not a url"))
+        XCTAssertNil(AppSettings.token(fromBrowserURL: "http://127.0.0.1:43876/"))
+        XCTAssertNil(AppSettings.token(fromBrowserURL: "http://127.0.0.1:43876/?token="))
+    }
+
+    /// The discovered token replaces the fixed fallback in the APK endpoint,
+    /// while the loopback host and native port stay fixed.
+    func testNativeWebSocketURLCarriesDiscoveredToken() {
+        let discovered = settings(host: "33.229.144.37").picoNativeWebSocketURL(
+            token: "T-1ldIWoPr2wgrzNy7ejUsjHBCTpNl_n"
+        )
+
+        XCTAssertEqual(
+            discovered,
+            "ws://127.0.0.1:43876/ws?token=T-1ldIWoPr2wgrzNy7ejUsjHBCTpNl_n"
+        )
+    }
+
+    /// An empty discovery result must not produce a tokenless URL.
+    func testNativeWebSocketURLFallsBackWhenTokenIsEmpty() {
+        XCTAssertEqual(settings().picoNativeWebSocketURL(token: ""), "ws://127.0.0.1:43876/ws?token=eva")
+    }
+
+    /// The reported bundle version has to track the APK actually shipped.
+    func testBundledVersionMatchesShippedAPK() {
+        XCTAssertEqual(NativePicoApp.bundledVersionName, "0.2.4")
+    }
+
     func testDefaultIsInvalidUntilHostIsFilledIn() {
         let issues = AppSettings.default.validate()
 

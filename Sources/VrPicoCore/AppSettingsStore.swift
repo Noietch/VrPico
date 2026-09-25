@@ -3,7 +3,8 @@ import Foundation
 /// 设置的持久化。
 ///
 /// Server and relay settings are stored in UserDefaults. The native token is
-/// fixed to `eva`; the old token key is retained only for migration safety.
+/// discovered per connection from the console's `browser_url`, so it is not
+/// persisted; the old token key is retained only for migration safety.
 public final class AppSettingsStore {
 
     public static let settingsKey = "com.eva.vrpico.settings"

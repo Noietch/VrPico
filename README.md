@@ -28,8 +28,38 @@ connection.
 
 Start EVA-CLIENT normally, select `EVA-VR (PICO)` under Devices, then start
 Operation. VrPico can start the selected teleop service through the local or
-remote EVA Console API when needed. The native input service uses port `43876`
-and the fixed development token `eva`.
+remote EVA Console API when needed. The native input service uses port `43876`.
+
+The node's access token is read from the console's `browser_url` on every
+connect, so VrPico works with both token modes:
+
+- `--token <value>` — a fixed token. The `eva` default is used only when the
+  console reports none.
+- `--token-stdin` — the node mints a random token at each start. VrPico passes
+  the live value to the APK, so restarting the node does not strand the headset.
+
+VrPico hands the endpoint to the APK through
+`am start --es server_url 'ws://127.0.0.1:43876/ws?token=<live>'`. EVA-VR v0.2.4
+reads that extra; older builds hardcoded `token=eva` and will be rejected with
+`401 Unauthorized` against a `--token-stdin` node.
+
+### Using your own SSH tunnel
+
+When the remote host does not expose port `43876` publicly, forward it yourself
+and VrPico will reuse that listener instead of starting its own relay:
+
+```bash
+ssh -N -p 8000 \
+  -L 8415:127.0.0.1:8415 \
+  -L 8416:127.0.0.1:8416 \
+  -L 43876:127.0.0.1:43876 \
+  user@remote-host
+```
+
+Add `-o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o ExitOnForwardFailure=yes`
+so a dropped tunnel fails loudly instead of leaving dead forwards behind.
+VrPico only creates a Mac-side relay when loopback is free, and never removes a
+listener it did not create.
 
 For a remote Linux host, bind the native input node to a reachable interface
 and make both the Console API and port `43876` reachable from this Mac. A
@@ -100,7 +130,14 @@ binary and does not require Android Studio, Unity, or a separate runtime.
 ## Troubleshooting
 
 - **Remote port unreachable**: confirm the remote node uses `--host 0.0.0.0`,
-  the port is open, and the Mac is on the required VPN.
+  the port is open, and the Mac is on the required VPN. If `43876` is firewalled
+  but the console answers on `8415`, use your own SSH tunnel (above).
+- **Headset keeps reconnecting / node logs `401 Unauthorized`**: the APK is
+  older than v0.2.4 and hardcodes `token=eva`. Reinstall with **安装 EVA-VR**;
+  a `--token-stdin` node mints a random token the old build cannot know.
+- **Node logs `400 Bad Request` in a loop**: something is opening TCP to
+  `43876` without a WebSocket handshake. VrPico probes with a real handshake
+  after the first connect, so a steady stream points at another tool.
 - **PICO unauthorized**: confirm USB debugging in the headset. After you accept
   the authorization prompt, VrPico adopts the new PICO automatically.
 - **No input**: confirm `EVA-VR` is installed and that Operation is started in

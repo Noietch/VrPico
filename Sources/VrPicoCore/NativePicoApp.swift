@@ -6,7 +6,7 @@ public enum NativePicoApp {
     public static let packageName = "org.eva.pico.input"
     public static let displayName = "EVA-VR"
     public static let bundledAPKName = "EVA-PICO.apk"
-    public static let bundledVersionName = "0.2.0"
+    public static let bundledVersionName = "0.2.4"
 
     /// The build script copies the APK to this fixed location inside the app.
     /// The URL argument keeps this helper testable without requiring a bundle.

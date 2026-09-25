@@ -32,6 +32,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public static let defaultViserPort = 8416
     public static let defaultWebXRPort = 43876
     public static let defaultWebXRMode = "ar"
+    /// Fallback for nodes launched with a fixed `--token`. Servers that use
+    /// `--token-stdin` generate a fresh random token per start; that value is
+    /// discovered from the console's `browser_url` instead, see
+    /// `token(fromBrowserURL:)`.
     public static let nativeToken = "eva"
     // Kept as a source-compatible alias for older settings/tests.
     public static let defaultWebXRToken = nativeToken
@@ -163,16 +167,40 @@ public struct AppSettings: Codable, Equatable, Sendable {
     // MARK: - Native PICO address
 
     /// The native APK connects to the loopback endpoint created by adb reverse.
-    public func picoNativeWebSocketURL() -> String {
+    ///
+    /// The port is always the fixed native port on loopback — `adb reverse`
+    /// publishes the remote node there regardless of the configured host. Only
+    /// the token varies, and it must match what the remote node is checking.
+    public func picoNativeWebSocketURL(token: String = AppSettings.nativeToken) -> String {
+        let resolved = token.isEmpty ? Self.nativeToken : token
         var components = URLComponents()
         components.scheme = "ws"
         components.host = "127.0.0.1"
         components.port = Self.defaultWebXRPort
         components.path = "/ws"
         components.queryItems = [
-            URLQueryItem(name: "token", value: Self.nativeToken),
+            URLQueryItem(name: "token", value: resolved),
         ]
-        return components.string ?? "ws://127.0.0.1:\(Self.defaultWebXRPort)/ws?token=\(Self.nativeToken)"
+        return components.string ?? "ws://127.0.0.1:\(Self.defaultWebXRPort)/ws?token=\(resolved)"
+    }
+
+    /// Extract the access token the console put in `browser_url`.
+    ///
+    /// `GET <host>:<clientPort>/api/device_settings` returns a ready-to-open
+    /// console URL such as `http://127.0.0.1:43876/?token=<random>`. The node
+    /// started with `--token-stdin` generates that token at launch and rejects
+    /// anything else, so this is the only way to learn it. Tokens may contain
+    /// `-` and `_`; the value is percent-decoded.
+    public static func token(fromBrowserURL browserURL: String) -> String? {
+        let trimmed = browserURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let components = URLComponents(string: trimmed) else {
+            return nil
+        }
+        guard let value = components.queryItems?.first(where: { $0.name == "token" })?.value,
+              !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 
     /// Compatibility helper for older WebXR callers. The native app does not

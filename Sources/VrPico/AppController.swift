@@ -28,6 +28,21 @@ enum PendingDeviceAction {
     case install
 }
 
+/// Where the native node's access token came from.
+enum NativeTokenResolution: Equatable {
+    /// The console reported the live token through `browser_url`.
+    case discovered(String)
+    /// The console reported none; assume the fixed `eva` default.
+    case fallback
+
+    var token: String {
+        switch self {
+        case .discovered(let value): return value
+        case .fallback: return AppSettings.nativeToken
+        }
+    }
+}
+
 /// 全局状态与业务流程。
 ///
 /// 所有网络/进程操作都在这里发起，视图只负责展示和调用。
@@ -73,6 +88,9 @@ final class AppController: ObservableObject {
         let serverHost: String
         let webxrPort: Int
         let adbExecutableURL: URL
+        /// Token the remote node accepts. Random per start for `--token-stdin`
+        /// nodes, so a changed token has to invalidate the session.
+        let token: String
         var ownedReverseSerials: Set<String>
     }
 
@@ -112,10 +130,7 @@ final class AppController: ObservableObject {
            activeSession?.serial != device.serial,
            Date() >= nextAutoConnectAt,
            settings.validate().isEmpty {
-            let host = settings.trimmedServerHost
-            let nodeReady = activeSession != nil ? true : await StatusProbe.tcpReachable(
-                host: host, port: UInt16(AppSettings.defaultWebXRPort)
-            )
+            let nodeReady = activeSession != nil ? true : await nativeNodeIsReachable()
             if nodeReady {
                 nextAutoConnectAt = Date().addingTimeInterval(10)
                 await connectAndOpenPico(serial: device.serial)
@@ -277,11 +292,7 @@ final class AppController: ObservableObject {
 
     func testWebXR() async {
         serverStatus.webxr = .checking
-        let port = UInt16(AppSettings.defaultWebXRPort)
-        let reachable = await StatusProbe.tcpReachable(
-            host: settings.trimmedServerHost,
-            port: port
-        )
+        let reachable = await nativeNodeIsReachable()
         serverStatus.webxr = reachable ? .ok(detail: "端口可达") : .failed(reason: "连不上")
     }
 
@@ -414,16 +425,33 @@ final class AppController: ObservableObject {
 
     /// The console process on port 8080 and the native VR WebSocket node are
     /// separate. Start the selected native teleop component through the console
-    /// API before probing 43876, so opening VrPico is enough for local use.
-    private func ensureNativeTeleopStarted(_ requestedSettings: AppSettings) async throws {
+    /// API whenever its endpoint is not already reachable.
+    ///
+    /// Returns the access token the node is checking, or `.fallback` when the
+    /// console does not report one. Nodes launched with `--token-stdin` mint a
+    /// random token per start, so the caller must never assume `eva`.
+    private func ensureNativeTeleopStarted(
+        _ requestedSettings: AppSettings
+    ) async throws -> NativeTokenResolution {
         let host = requestedSettings.trimmedServerHost
         let nativePort = UInt16(AppSettings.defaultWebXRPort)
-        if await StatusProbe.tcpReachable(host: host, port: nativePort) { return }
 
+        // Remote nodes are often firewalled on 43876 and reachable only through
+        // the adb-reverse path, so an unreachable host must not skip the start
+        // request. A server started outside this app still resolves here via
+        // its own `browser_url`.
         var status = try await consoleRequest(
             settings: requestedSettings,
             path: "api/device_settings"
         )
+
+        if Self.discoveredToken(from: status) != nil {
+            return .discovered(Self.discoveredToken(from: status)!)
+        }
+        if await StatusProbe.tcpReachable(host: host, port: nativePort) {
+            return .fallback
+        }
+
         let processes = status["processes"] as? [String: Any]
         let operation = (status["operations"] as? [String: Any])?["teleop"] as? [String: Any]
         let operationState = operation?["state"] as? String
@@ -440,7 +468,7 @@ final class AppController: ObservableObject {
         }
 
         for _ in 0..<80 {
-            if await StatusProbe.tcpReachable(host: host, port: nativePort) { return }
+            if let token = Self.discoveredToken(from: status) { return .discovered(token) }
             try await Task.sleep(nanoseconds: 250_000_000)
             status = try await consoleRequest(
                 settings: requestedSettings,
@@ -460,8 +488,38 @@ final class AppController: ObservableObject {
         ])
     }
 
+    /// The console only publishes `browser_url` once the node is up and the
+    /// process handle is known, which is exactly when its token is meaningful.
+    private static func discoveredToken(from status: [String: Any]) -> String? {
+        guard let browserURL = status["browser_url"] as? String else { return nil }
+        return AppSettings.token(fromBrowserURL: browserURL)
+    }
+
     private func requiresRelay(for host: String) -> Bool {
         !["127.0.0.1", "localhost", "::1"].contains(host.lowercased())
+    }
+
+    /// Whether the native node is reachable at the address PICO will actually
+    /// dial. That is always loopback: `adb reverse` publishes the node there,
+    /// whether the node is local or reached through the Mac relay.
+    ///
+    /// Probing the configured server host instead would be wrong twice over —
+    /// the native port is fixed on loopback regardless of `serverHost`, and a
+    /// remote node is commonly firewalled on 43876 and reachable only through
+    /// the tunnel.
+    ///
+    /// The token is only known once a session exists. Before that, fall back to
+    /// a plain TCP probe and accept that the node logs it as a bad handshake;
+    /// after that, present a real handshake so polling stays quiet.
+    private func nativeNodeIsReachable() async -> Bool {
+        let nativePort = UInt16(AppSettings.defaultWebXRPort)
+        guard let token = activeSession?.token else {
+            return await StatusProbe.tcpReachable(host: "127.0.0.1", port: nativePort)
+        }
+        guard let url = URL(string: settings.picoNativeWebSocketURL(token: token)) else {
+            return false
+        }
+        return await StatusProbe.webSocketReachable(url: url)
     }
 
     /// Main action: relay the remote EVA node, establish adb reverse, and
@@ -492,8 +550,9 @@ final class AppController: ObservableObject {
         // 2. The console is not the VR data channel. Ask it to start the native
         // teleop component, then verify the fixed EVA-VR port.
         busyMessage = "启动 EVA-VR 服务…"
+        let resolution: NativeTokenResolution
         do {
-            try await ensureNativeTeleopStarted(requestedSettings)
+            resolution = try await ensureNativeTeleopStarted(requestedSettings)
         } catch {
             serverStatus.webxr = .failed(reason: "连不上")
             lastError = error.localizedDescription
@@ -546,6 +605,7 @@ final class AppController: ObservableObject {
            active.serverHost == host,
            active.webxrPort == nativePort,
            active.adbExecutableURL == client.executableURL,
+           active.token == resolution.token,
            (requiresRelay(for: host) ? relay != nil : relay == nil) {
             do {
                 let sessionClient = AdbClient(executableURL: active.adbExecutableURL)
@@ -560,7 +620,7 @@ final class AppController: ObservableObject {
                 busyMessage = "启动 EVA-VR…"
                 try await sessionClient.openNativeApp(
                     serial: serial,
-                    serverURL: requestedSettings.picoNativeWebSocketURL()
+                    serverURL: requestedSettings.picoNativeWebSocketURL(token: resolution.token)
                 )
                 busyMessage = ""
                 await refreshDevices()
@@ -578,13 +638,21 @@ final class AppController: ObservableObject {
 
         // 7. Remote servers need a Mac-side relay. For a local EVA process,
         // adb reverse can target 43876 directly and no listener may take it.
+        //
+        // A user-supplied SSH tunnel commonly owns loopback already. In that
+        // case it forwards to the remote node itself, so binding would fail and
+        // the whole connect would abort — reuse the existing listener instead.
         if requiresRelay(for: host) {
-            busyMessage = "启动本地 Relay…"
-            do {
-                try await startRelay(host: host, port: webxrPort)
-            } catch {
-                lastError = error.localizedDescription
-                return
+            if await Self.loopbackAlreadyServesNode(port: nativePort, host: host) {
+                busyMessage = "复用已有隧道…"
+            } else {
+                busyMessage = "启动本地 Relay…"
+                do {
+                    try await startRelay(host: host, port: webxrPort)
+                } catch {
+                    lastError = error.localizedDescription
+                    return
+                }
             }
         }
 
@@ -612,6 +680,7 @@ final class AppController: ObservableObject {
             serverHost: host,
             webxrPort: nativePort,
             adbExecutableURL: client.executableURL,
+            token: resolution.token,
             ownedReverseSerials: reverseWasPreexisting ? [] : [serial]
         )
 
@@ -620,7 +689,7 @@ final class AppController: ObservableObject {
         do {
             try await client.openNativeApp(
                 serial: serial,
-                serverURL: requestedSettings.picoNativeWebSocketURL()
+                serverURL: requestedSettings.picoNativeWebSocketURL(token: resolution.token)
             )
         } catch {
             let message = error.localizedDescription
@@ -631,6 +700,22 @@ final class AppController: ObservableObject {
 
         busyMessage = ""
         await refreshDevices()
+    }
+
+    /// Whether loopback already forwards to the native node, typically because
+    /// the user runs their own `ssh -L 43876:...` tunnel. Verified with a real
+    /// WebSocket handshake so an unrelated listener cannot be mistaken for the
+    /// node and silently swallow PICO's frames.
+    private static func loopbackAlreadyServesNode(port: Int, host: String) async -> Bool {
+        var components = URLComponents()
+        components.scheme = "ws"
+        components.host = "127.0.0.1"
+        components.port = port
+        components.path = "/ws"
+        guard let url = components.url else { return false }
+        // The token is unknown here; a token-checked node answers 401, which
+        // still proves the real node is behind the listener.
+        return await StatusProbe.webSocketReachable(url: url, acceptAuthChallenge: true)
     }
 
     private func startRelay(host: String, port: UInt16) async throws {

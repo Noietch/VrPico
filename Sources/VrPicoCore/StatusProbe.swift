@@ -76,6 +76,48 @@ public enum StatusProbe {
         }
     }
 
+    /// 探测 WebSocket 服务能否正常完成握手。
+    ///
+    /// 裸 TCP 探测对这个用途是不够的：连接建立后立刻关闭会留下一条没有
+    /// WebSocket 握手的半开连接，node 端每次都会记一条 `400 Bad Request`，
+    /// 在轮询下把日志刷满。这里发一个真正的握手请求，再主动断开。
+    ///
+    /// 101 表示握手成功；200 表示服务在但不接受当前路径（node 会用 200 拒掉
+    /// 非 `/ws` 请求）。两者都算「服务可用」。
+    ///
+    /// `acceptAuthChallenge` 额外把 401 也算作可用：调用方在还没拿到 token 时
+    /// 用它判断「对面是不是真的 node」。401 是 node 的鉴权响应，恰好证明它
+    /// 在那儿；而任意一个陌生监听者不会回 401。
+    public static func webSocketReachable(
+        url: URL,
+        timeout: TimeInterval = 5,
+        acceptAuthChallenge: Bool = false
+    ) async -> Bool {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        request.httpMethod = "GET"
+        request.setValue("Upgrade", forHTTPHeaderField: "Connection")
+        request.setValue("websocket", forHTTPHeaderField: "Upgrade")
+        request.setValue("13", forHTTPHeaderField: "Sec-WebSocket-Version")
+        request.setValue(
+            "dGhlIHNhbXBsZSBub25jZQ==", forHTTPHeaderField: "Sec-WebSocket-Key"
+        )
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [:]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return false }
+            if acceptAuthChallenge && http.statusCode == 401 { return true }
+            return (200...299).contains(http.statusCode)
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - HTTP 状态
 
     /// 探测 HTTP 服务。
