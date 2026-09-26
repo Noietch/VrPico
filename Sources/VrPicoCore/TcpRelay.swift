@@ -45,10 +45,18 @@ public final class TcpRelay {
     /// 状态变化回调，**在主线程**上触发。
     public var onStatsChanged: ((RelayStats) -> Void)?
 
+    /// 主面板的「手柄反向」开关。每条连接上的改写器逐帧读它，所以切换在
+    /// 下一帧就生效，不需要断开重连。
+    public var poseFlipEnabled: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _poseFlipEnabled }
+        set { lock.lock(); _poseFlipEnabled = newValue; lock.unlock() }
+    }
+
     private let queue = DispatchQueue(label: "com.eva.vrpico.relay")
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: RelayConnection] = [:]
     private var stats = RelayStats()
+    private var _poseFlipEnabled = false
     private let lock = NSLock()
 
     public init(listenPort: UInt16, upstreamHost: String, upstreamPort: UInt16) {
@@ -174,6 +182,7 @@ public final class TcpRelay {
             client: client,
             upstream: upstream,
             queue: queue,
+            flipEnabled: { [weak self] in self?.poseFlipEnabled ?? false },
             onBytesToUpstream: { [weak self] count in
                 self?.updateStats {
                     $0.bytesToUpstream += count
@@ -238,12 +247,18 @@ private final class RelayConnection {
     private let onBytesToClient: (Int) -> Void
     private let onFinished: (ObjectIdentifier) -> Void
 
+    /// Rewrites the PICO→server half of the stream: parses WebSocket frames
+    /// and, while the toggle is on, turns controller poses 180°. Off means
+    /// frames pass with identical payloads, so the normal path is unchanged.
+    private var rewriter: WebSocketPoseRewriter
+
     private var isFinished = false
 
     init(
         client: NWConnection,
         upstream: NWConnection,
         queue: DispatchQueue,
+        flipEnabled: @escaping () -> Bool,
         onBytesToUpstream: @escaping (Int) -> Void,
         onBytesToClient: @escaping (Int) -> Void,
         onFinished: @escaping (ObjectIdentifier) -> Void
@@ -251,6 +266,7 @@ private final class RelayConnection {
         self.client = client
         self.upstream = upstream
         self.queue = queue
+        self.rewriter = WebSocketPoseRewriter(flip: flipEnabled)
         self.onBytesToUpstream = onBytesToUpstream
         self.onBytesToClient = onBytesToClient
         self.onFinished = onFinished
@@ -282,31 +298,42 @@ private final class RelayConnection {
         upstream.start(queue: queue)
     }
 
-    /// 两侧各起一条搬运循环。
+    /// 两侧各起一条搬运循环。PICO→server 这一路经过改写器：可能会为了攒
+    /// 一个完整帧而暂时不产出字节，也可能在开关打开时改写姿态帧。
     private func pipe() {
-        pump(from: client, to: upstream, countBytes: onBytesToUpstream)
+        pump(from: client, to: upstream, countBytes: onBytesToUpstream) { [weak self] data in
+            guard let self else { return data }
+            return self.rewriter.process(data)
+        }
         pump(from: upstream, to: client, countBytes: onBytesToClient)
     }
 
     /// 从 source 读一块就写一块，写完再读下一块——这样天然形成背压，
-    /// 不会因为一侧读得快而把内存撑爆。
+    /// 不会因为一侧读得快而把内存撑爆。`transform` 可以改写或暂存字节；
+    /// 返回空表示这块被攒下了，直接读下一块。
     private func pump(
         from source: NWConnection,
         to destination: NWConnection,
-        countBytes: @escaping (Int) -> Void
+        countBytes: @escaping (Int) -> Void,
+        transform: ((Data) -> Data)? = nil
     ) {
         source.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
             guard let self, !self.isFinished else { return }
 
             if let data, !data.isEmpty {
                 countBytes(data.count)
-                destination.send(content: data, completion: .contentProcessed { [weak self] sendError in
+                let outgoing = transform?(data) ?? data
+                if outgoing.isEmpty {
+                    self.pump(from: source, to: destination, countBytes: countBytes, transform: transform)
+                    return
+                }
+                destination.send(content: outgoing, completion: .contentProcessed { [weak self] sendError in
                     guard let self, !self.isFinished else { return }
                     if sendError != nil {
                         self.finish()
                         return
                     }
-                    self.pump(from: source, to: destination, countBytes: countBytes)
+                    self.pump(from: source, to: destination, countBytes: countBytes, transform: transform)
                 })
                 return
             }
@@ -324,7 +351,7 @@ private final class RelayConnection {
                 return
             }
 
-            self.pump(from: source, to: destination, countBytes: countBytes)
+            self.pump(from: source, to: destination, countBytes: countBytes, transform: transform)
         }
     }
 

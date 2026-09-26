@@ -291,6 +291,19 @@ struct MainView: View {
             .disabled(controller.isBusy || !controller.canInstallNativePico)
             .help(controller.canInstallNativePico ? "点击后检查并安装 EVA-VR" : "请先用 USB 连接并授权 PICO")
 
+            Toggle(isOn: Binding(
+                get: { controller.settings.poseFlipEnabled },
+                set: { controller.setPoseFlip($0) }
+            )) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.left.and.right")
+                    Text("手柄反向")
+                        .font(.system(size: 12))
+                }
+            }
+            .toggleStyle(.checkbox)
+            .help("手柄前后/左右与机械臂相反时打开。Relay 转发时把姿态旋转 180°，下一帧生效，不依赖服务器上的配置")
+
             HStack(spacing: 8) {
                 Button {
                     controller.openClient()

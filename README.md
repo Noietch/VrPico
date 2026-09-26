@@ -29,7 +29,8 @@ connection.
 Start EVA-CLIENT normally, select `EVA-VR (PICO)` under Devices, then start
 Operation. VrPico can start the selected teleop service through the local or
 remote EVA Console API when needed. The native input service defaults to port
-`43876`; set **EVA-VR 端口** in settings when the node binds a different one.
+`43876`; VrPico's **EVA-VR 端口** defaults to `8417`, the port the standalone
+collection stack binds, so change it only when your node listens elsewhere.
 
 The node's access token is read from the console's `browser_url` on every
 connect, so VrPico works with both token modes:
@@ -40,10 +41,11 @@ connect, so VrPico works with both token modes:
   the live value to the APK, so restarting the node does not strand the headset.
 
 A node started **outside** the console owns no `browser_url`, so its token
-cannot be discovered. Fill in **EVA-VR token** in settings for that case; VrPico
-then uses it instead of guessing `eva`, and skips the console start request so it
-never collides with the node's own ports. This is the normal setup when the node
-comes from a standalone collection stack.
+cannot be discovered. **EVA-VR token** covers that case, and VrPico prefills it
+with the collection stack's fixed token; change it only when your node uses a
+different `--token`. With a token filled in, VrPico uses it instead of guessing
+`eva`, and skips the console start request so it never collides with the node's
+own ports.
 
 VrPico hands the endpoint to the APK through
 `am start --es server_url 'ws://127.0.0.1:<port>/ws?token=<live>'`. EVA-VR v0.2.5
@@ -92,7 +94,7 @@ The distributed `.app` contains its own ADB binary and the tested
 `EVA-VR v0.2.5` APK. No Android SDK, Homebrew, or manual APK installation is
 needed.
 
-Download `EVA-VR-macOS-v0.2.4.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
+Download `EVA-VR-macOS-v0.2.5.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
 unzip it, and open `VrPico.app`. The app is ad-hoc signed, not Apple notarized;
 macOS may require removing the quarantine attribute after downloading:
 
@@ -101,10 +103,11 @@ xattr -dr com.apple.quarantine VrPico.app
 ```
 
 1. Enable USB debugging and accept the authorization prompt.
-2. Open settings and enter the EVA Client and Viser addresses as `IP:port`.
-3. If the node does not use port `43876`, set **EVA-VR 端口** to match it. If the
-   node was not started by the console, fill in **EVA-VR token** too.
-4. Click **连接 EVA**.
+2. Open settings and enter the EVA Client and Viser addresses as `IP:port`. The
+   defaults target the collection stack (`33.229.145.163`, ports
+   `8415`/`8416`/`8417`, fixed token prefilled), so for that setup nothing
+   needs changing.
+3. Click **连接 EVA**.
 
 The app will:
 
@@ -125,6 +128,19 @@ replaced, it automatically installs the bundled APK when needed, creates the
 new reverse mapping, and launches EVA-VR once the EVA node is reachable.
 To replace an older installed APK with the bundled build, use **安装 EVA-VR**.
 EVA-VR v0.2.5 matches the WebXR convention for thumbstick Y: up is negative.
+
+## 手柄反向
+
+When the robot arm moves opposite to the controllers (forward becomes
+backward, left becomes right), open **手柄反向** in the status panel. The relay
+then turns every controller pose 180° about the vertical axis while forwarding,
+which is exactly the correction the server-side `base_from_xr_rotation`
+override applies — except this one lives on the Mac, so a git reset on a shared
+server checkout cannot silently undo it. The toggle is read per frame: it
+takes effect on the next controller frame without reconnecting the headset or
+restarting anything on the server. It only works through the relay path (a
+remote server); a headset on the server's own network does not pass through
+this Mac.
 
 ## Build
 
@@ -156,6 +172,9 @@ binary and does not require Android Studio, Unity, or a separate runtime.
   after the first connect, so a steady stream points at another tool.
 - **PICO unauthorized**: confirm USB debugging in the headset. After you accept
   the authorization prompt, VrPico adopts the new PICO automatically.
+- **Robot moves opposite to the controllers**: toggle **手柄反向** on. If the
+  pose was correct before and flipped after a server-side git operation, this
+  replaces that lost config override permanently — see the 手柄反向 section.
 - **No input**: confirm `EVA-VR` is installed and that Operation is started in
   EVA-CLIENT. The native input service defaults to port `43876`.
 - **No vibration**: vibration is sent only when EVA emits an explicit

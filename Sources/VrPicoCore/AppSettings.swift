@@ -34,15 +34,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// "fall back to the historical `eva` default".
     public var nativeTokenOverride: String
 
+    /// Relay 转发时把手柄姿态旋转 180°（绕 XR 竖直轴）。服务器上那份
+    /// base_from_xr_rotation 配置在共享 checkout 里经常被 git 操作还原，
+    /// 打开后由 Relay 在本地修正，服务器配置再怎么变都不影响。
+    public var poseFlipEnabled: Bool
+
     /// 指定 Pico 序列号。留空表示自动发现（仅在只有一台授权设备时可用）。
     public var picoSerial: String
 
     public static let defaultClientPort = 8415
     public static let defaultViserPort = 8416
-    /// Historical default. The port is user-configurable because a node started
-    /// outside the console (see `collect_stack.sh`) may bind its own port, and a
-    /// locked-down host may only allow a narrow range.
-    public static let defaultWebXRPort = 43876
+    /// 采集栈（collect_stack.sh）里 vr_node 的固定端口。node.py 自身的内置默认
+    /// 仍是 43876，但那个端口在集群防火墙上通常不放行，所以应用默认对准采集栈。
+    public static let defaultWebXRPort = 8417
     public static let defaultWebXRMode = "ar"
     /// Fallback for nodes launched with a fixed `--token`. Servers that use
     /// `--token-stdin` generate a fresh random token per start; that value is
@@ -51,15 +55,21 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public static let nativeToken = "eva"
     // Kept as a source-compatible alias for older settings/tests.
     public static let defaultWebXRToken = nativeToken
+    /// 团队采集机的固定地址，新装或重置后开箱即用；仍可在设置里改成别的机器。
+    public static let defaultServerHost = "33.229.145.163"
+    /// 采集栈节点的固定 token（collect_stack.sh 以 `--token-stdin <<< "$VR_TOKEN"`
+    /// 喂给 node.py）。节点由 console 启动时，live token 仍然优先于这个值。
+    public static let defaultNativeTokenOverride = "eva-pico4-ultra-vr"
 
     public static let `default` = AppSettings(
-        serverHost: "",
+        serverHost: defaultServerHost,
         viserHost: nil,
         clientPort: defaultClientPort,
         viserPort: defaultViserPort,
         webxrPort: defaultWebXRPort,
         webxrMode: defaultWebXRMode,
-        nativeTokenOverride: "",
+        nativeTokenOverride: defaultNativeTokenOverride,
+        poseFlipEnabled: false,
         picoSerial: ""
     )
 
@@ -70,7 +80,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         viserPort: Int,
         webxrPort: Int,
         webxrMode: String,
-        nativeTokenOverride: String = "",
+        nativeTokenOverride: String = defaultNativeTokenOverride,
+        poseFlipEnabled: Bool = false,
         picoSerial: String
     ) {
         self.serverHost = serverHost
@@ -80,6 +91,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.webxrPort = webxrPort
         self.webxrMode = webxrMode
         self.nativeTokenOverride = nativeTokenOverride
+        self.poseFlipEnabled = poseFlipEnabled
         self.picoSerial = picoSerial
     }
 
@@ -101,9 +113,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.webxrPort = try container.decode(Int.self, forKey: .webxrPort)
         self.webxrMode = try container.decodeIfPresent(String.self, forKey: .webxrMode)
             ?? Self.defaultWebXRMode
+        // 旧版本存的 JSON 没有这个 key：按采集栈默认 token 处理，免得升级后
+        // 立刻吃 401。用户刻意清空时存的是显式空串，会原样保留。
         self.nativeTokenOverride = try container.decodeIfPresent(
             String.self, forKey: .nativeTokenOverride
-        ) ?? ""
+        ) ?? Self.defaultNativeTokenOverride
+        self.poseFlipEnabled = try container.decodeIfPresent(Bool.self, forKey: .poseFlipEnabled)
+            ?? false
         self.picoSerial = try container.decode(String.self, forKey: .picoSerial)
     }
 

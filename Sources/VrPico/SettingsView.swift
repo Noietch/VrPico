@@ -50,7 +50,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("EVA-VR 端口")
                         .font(.system(size: 12, weight: .medium))
-                    TextField("43876", text: $vrPort)
+                    TextField("8417", text: $vrPort)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 13))
                         .frame(width: 90)

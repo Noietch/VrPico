@@ -503,7 +503,7 @@ final class AppController: ObservableObject {
             }
         }
         throw NSError(domain: "VrPico", code: 5, userInfo: [
-            NSLocalizedDescriptionKey: "EVA-VR teleop 已请求启动，但 43876 端口未就绪",
+            NSLocalizedDescriptionKey: "EVA-VR teleop 已请求启动，但 \(requestedSettings.webxrPort) 端口未就绪",
         ])
     }
 
@@ -752,12 +752,21 @@ final class AppController: ObservableObject {
         }
 
         let relay = TcpRelay(listenPort: port, upstreamHost: host, upstreamPort: port)
+        relay.poseFlipEnabled = settings.poseFlipEnabled
         relay.onStatsChanged = { [weak self] stats in
             Task { @MainActor in self?.relayStats = stats }
         }
         try await relay.start()
         self.relay = relay
         relayStats = relay.currentStats
+    }
+
+    /// 主面板「手柄反向」开关：持久化到设置；正在运行的 Relay 逐帧读取开关
+    /// 值，头显端下一帧就开始反转，不用重连、不用重启服务器。
+    func setPoseFlip(_ enabled: Bool) {
+        guard settings.poseFlipEnabled != enabled else { return }
+        settings.poseFlipEnabled = enabled
+        relay?.poseFlipEnabled = enabled
     }
 
     // MARK: - 断开

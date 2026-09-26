@@ -21,16 +21,18 @@ final class AppSettingsTests: XCTestCase {
 
     // MARK: - 默认值
 
-    /// 43876 只是历史默认值；三个端口都可以在设置里改。
+    /// 默认值对准采集栈：新装或重置后开箱即用。
     func testDefaultsMatchTeamConvention() {
         XCTAssertEqual(AppSettings.defaultClientPort, 8415)
         XCTAssertEqual(AppSettings.defaultViserPort, 8416)
-        XCTAssertEqual(AppSettings.defaultWebXRPort, 43876)
+        XCTAssertEqual(AppSettings.defaultWebXRPort, 8417)
+        XCTAssertEqual(AppSettings.default.serverHost, "33.229.145.163")
         XCTAssertEqual(AppSettings.default.clientPort, 8415)
         XCTAssertEqual(AppSettings.default.viserPort, 8416)
-        XCTAssertEqual(AppSettings.default.webxrPort, 43876)
+        XCTAssertEqual(AppSettings.default.webxrPort, 8417)
         XCTAssertEqual(AppSettings.default.webxrMode, "ar")
-        XCTAssertEqual(AppSettings.default.nativeTokenOverride, "")
+        XCTAssertEqual(AppSettings.default.nativeTokenOverride, "eva-pico4-ultra-vr")
+        XCTAssertFalse(AppSettings.default.poseFlipEnabled)
     }
 
     /// 三个端口都要就地生效——尤其是 native，它曾被写死成 43876。
@@ -90,13 +92,13 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertEqual(
             discovered,
-            "ws://127.0.0.1:43876/ws?token=T-1ldIWoPr2wgrzNy7ejUsjHBCTpNl_n"
+            "ws://127.0.0.1:8417/ws?token=T-1ldIWoPr2wgrzNy7ejUsjHBCTpNl_n"
         )
     }
 
     /// An empty discovery result must not produce a tokenless URL.
     func testNativeWebSocketURLFallsBackWhenTokenIsEmpty() {
-        XCTAssertEqual(settings().picoNativeWebSocketURL(token: ""), "ws://127.0.0.1:43876/ws?token=eva")
+        XCTAssertEqual(settings().picoNativeWebSocketURL(token: ""), "ws://127.0.0.1:8417/ws?token=eva")
     }
 
     // MARK: - token 覆盖
@@ -109,8 +111,9 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(configured.trimmedNativeTokenOverride, "eva-pico4-ultra-vr")
     }
 
-    func testManualTokenOverrideDefaultsToEmpty() {
-        XCTAssertEqual(settings().trimmedNativeTokenOverride, "")
+    /// 手动 token 默认就是采集栈的固定 token；console 发现的 live token 仍优先。
+    func testManualTokenOverrideDefaultsToCollectionStack() {
+        XCTAssertEqual(settings().trimmedNativeTokenOverride, "eva-pico4-ultra-vr")
     }
 
     /// The reported bundle version has to track the APK actually shipped.
@@ -118,11 +121,9 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(NativePicoApp.bundledVersionName, "0.2.5")
     }
 
-    func testDefaultIsInvalidUntilHostIsFilledIn() {
-        let issues = AppSettings.default.validate()
-
-        XCTAssertEqual(issues.count, 1)
-        XCTAssertEqual(issues.first?.field, .serverHost)
+    /// 默认值自带采集机地址，开箱即通过校验。
+    func testDefaultIsUsableOutOfTheBox() {
+        XCTAssertTrue(AppSettings.default.validate().isEmpty)
     }
 
     // MARK: - 校验
@@ -266,7 +267,8 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertEqual(loaded.serverHost, "33.229.148.54")
     }
 
-    /// 旧版本存的 JSON 没有 nativeTokenOverride，升级后不能因此丢掉整份设置。
+    /// 旧版本存的 JSON 没有 nativeTokenOverride/poseFlipEnabled，升级后不能因此
+    /// 丢掉整份设置；缺的 key 按新默认值补齐，而不是清空。
     func testLegacySettingsWithoutTokenOverrideStillLoad() throws {
         let (store, defaults, suiteName) = makeStore()
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -287,7 +289,23 @@ final class AppSettingsStoreTests: XCTestCase {
 
         XCTAssertEqual(loaded.serverHost, "33.229.148.54")
         XCTAssertEqual(loaded.webxrPort, 8417)
+        XCTAssertEqual(loaded.nativeTokenOverride, "eva-pico4-ultra-vr")
+        XCTAssertFalse(loaded.poseFlipEnabled)
+    }
+
+    /// 用户刻意清空 token 时存的是显式空串，升级解码必须保留这个选择。
+    func testExplicitlyClearedTokenOverrideStaysEmpty() throws {
+        let (store, defaults, suiteName) = makeStore()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var settings = AppSettings.default
+        settings.nativeTokenOverride = ""
+        settings.poseFlipEnabled = true
+        store.saveSettings(settings)
+
+        let loaded = store.loadSettings()
         XCTAssertEqual(loaded.nativeTokenOverride, "")
+        XCTAssertTrue(loaded.poseFlipEnabled)
     }
 
     func testResetRemovesStoredToken() {
