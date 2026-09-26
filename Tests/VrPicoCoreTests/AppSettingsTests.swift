@@ -21,7 +21,7 @@ final class AppSettingsTests: XCTestCase {
 
     // MARK: - 默认值
 
-    /// The native input port is fixed; the console and Viser ports remain configurable.
+    /// 43876 只是历史默认值；三个端口都可以在设置里改。
     func testDefaultsMatchTeamConvention() {
         XCTAssertEqual(AppSettings.defaultClientPort, 8415)
         XCTAssertEqual(AppSettings.defaultViserPort, 8416)
@@ -30,16 +30,27 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(AppSettings.default.viserPort, 8416)
         XCTAssertEqual(AppSettings.default.webxrPort, 43876)
         XCTAssertEqual(AppSettings.default.webxrMode, "ar")
+        XCTAssertEqual(AppSettings.default.nativeTokenOverride, "")
     }
 
-    /// Console and Viser URLs use their configurable ports; native input is fixed.
+    /// 三个端口都要就地生效——尤其是 native，它曾被写死成 43876。
     func testCustomPortsAreHonoured() {
         let custom = settings(client: 9001, viser: 9002, webxr: 9003)
 
         XCTAssertEqual(custom.clientURL?.absoluteString, "http://10.0.0.1:9001/")
         XCTAssertEqual(custom.viserURL?.absoluteString, "http://10.0.0.1:9002/")
         XCTAssertTrue(custom.picoURL(token: "t", reload: 1).hasPrefix("http://127.0.0.1:9003/?"))
-        XCTAssertEqual(custom.picoNativeWebSocketURL(), "ws://127.0.0.1:43876/ws?token=eva")
+        XCTAssertEqual(custom.picoNativeWebSocketURL(), "ws://127.0.0.1:9003/ws?token=eva")
+    }
+
+    /// 采集栈把节点开在 8417（防火墙只放行 841x），native URL 必须跟着走。
+    func testNativePortIsConfigurable() {
+        let onCollectionStack = settings(webxr: 8417)
+
+        XCTAssertEqual(
+            onCollectionStack.picoNativeWebSocketURL(token: "eva-pico4-ultra-vr"),
+            "ws://127.0.0.1:8417/ws?token=eva-pico4-ultra-vr"
+        )
     }
 
     // MARK: - Native token discovery
@@ -71,7 +82,7 @@ final class AppSettingsTests: XCTestCase {
     }
 
     /// The discovered token replaces the fixed fallback in the APK endpoint,
-    /// while the loopback host and native port stay fixed.
+    /// while the loopback host stays fixed.
     func testNativeWebSocketURLCarriesDiscoveredToken() {
         let discovered = settings(host: "33.229.144.37").picoNativeWebSocketURL(
             token: "T-1ldIWoPr2wgrzNy7ejUsjHBCTpNl_n"
@@ -86,6 +97,20 @@ final class AppSettingsTests: XCTestCase {
     /// An empty discovery result must not produce a tokenless URL.
     func testNativeWebSocketURLFallsBackWhenTokenIsEmpty() {
         XCTAssertEqual(settings().picoNativeWebSocketURL(token: ""), "ws://127.0.0.1:43876/ws?token=eva")
+    }
+
+    // MARK: - token 覆盖
+
+    /// 采集栈的 node 不是 console 启的，`browser_url` 为空，只能手填固定 token。
+    func testManualTokenOverrideIsTrimmedAndReadable() {
+        var configured = settings()
+        configured.nativeTokenOverride = "  eva-pico4-ultra-vr\n"
+
+        XCTAssertEqual(configured.trimmedNativeTokenOverride, "eva-pico4-ultra-vr")
+    }
+
+    func testManualTokenOverrideDefaultsToEmpty() {
+        XCTAssertEqual(settings().trimmedNativeTokenOverride, "")
     }
 
     /// The reported bundle version has to track the APK actually shipped.
@@ -132,7 +157,9 @@ final class AppSettingsTests: XCTestCase {
     func testPortOutOfRangeIsRejected() {
         XCTAssertEqual(settings(client: 0).validate().first?.field, .clientPort)
         XCTAssertEqual(settings(viser: 70000).validate().first?.field, .viserPort)
-        XCTAssertTrue(settings(webxr: -1).validate().isEmpty)
+        // native 端口以前不校验（被写死），现在可配置就必须校验。
+        XCTAssertEqual(settings(webxr: 0).validate().first?.field, .webxrPort)
+        XCTAssertEqual(settings(webxr: 70000).validate().first?.field, .webxrPort)
     }
 
     func testOutOfRangePortsDoNotProduceURLs() {
@@ -144,7 +171,7 @@ final class AppSettingsTests: XCTestCase {
     func testAllIssuesReportedAtOnce() {
         let issues = settings(host: "", client: 0, viser: 0, webxr: 0).validate()
 
-        XCTAssertEqual(Set(issues.map(\.field)), [.serverHost, .clientPort, .viserPort])
+        XCTAssertEqual(Set(issues.map(\.field)), [.serverHost, .clientPort, .viserPort, .webxrPort])
     }
 
     // MARK: - URL
@@ -222,6 +249,45 @@ final class AppSettingsStoreTests: XCTestCase {
 
         store.saveToken("")
         XCTAssertEqual(store.loadTokenOrDefault(), "")
+    }
+
+    /// 端口不再是「固定值」，存进去就必须原样读出来。
+    func testStoredWebXRPortIsNotResetToDefault() {
+        let (store, defaults, suiteName) = makeStore()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var settings = AppSettings.default
+        settings.serverHost = "33.229.148.54"
+        settings.webxrPort = 8417
+        store.saveSettings(settings)
+
+        let loaded = store.loadSettings()
+        XCTAssertEqual(loaded.webxrPort, 8417)
+        XCTAssertEqual(loaded.serverHost, "33.229.148.54")
+    }
+
+    /// 旧版本存的 JSON 没有 nativeTokenOverride，升级后不能因此丢掉整份设置。
+    func testLegacySettingsWithoutTokenOverrideStillLoad() throws {
+        let (store, defaults, suiteName) = makeStore()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let legacy = """
+        {
+          "serverHost": "33.229.148.54",
+          "clientPort": 8415,
+          "viserPort": 8416,
+          "webxrPort": 8417,
+          "webxrMode": "ar",
+          "picoSerial": ""
+        }
+        """.data(using: .utf8)!
+        defaults.set(legacy, forKey: AppSettingsStore.settingsKey)
+
+        let loaded = store.loadSettings()
+
+        XCTAssertEqual(loaded.serverHost, "33.229.148.54")
+        XCTAssertEqual(loaded.webxrPort, 8417)
+        XCTAssertEqual(loaded.nativeTokenOverride, "")
     }
 
     func testResetRemovesStoredToken() {

@@ -25,11 +25,23 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// 传给 Pico 的 `mode` 查询参数，当前只用 `ar`。
     public var webxrMode: String
 
+    /// Access token to use when the console does not report a live one.
+    ///
+    /// A node started by the console publishes `browser_url`, which is where
+    /// `--token-stdin` nodes expose their random token. A node started outside
+    /// the console (for example by a standalone collection stack) has no
+    /// `browser_url`, so its fixed `--token` has to come from here. Empty means
+    /// "fall back to the historical `eva` default".
+    public var nativeTokenOverride: String
+
     /// 指定 Pico 序列号。留空表示自动发现（仅在只有一台授权设备时可用）。
     public var picoSerial: String
 
     public static let defaultClientPort = 8415
     public static let defaultViserPort = 8416
+    /// Historical default. The port is user-configurable because a node started
+    /// outside the console (see `collect_stack.sh`) may bind its own port, and a
+    /// locked-down host may only allow a narrow range.
     public static let defaultWebXRPort = 43876
     public static let defaultWebXRMode = "ar"
     /// Fallback for nodes launched with a fixed `--token`. Servers that use
@@ -47,6 +59,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         viserPort: defaultViserPort,
         webxrPort: defaultWebXRPort,
         webxrMode: defaultWebXRMode,
+        nativeTokenOverride: "",
         picoSerial: ""
     )
 
@@ -57,6 +70,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         viserPort: Int,
         webxrPort: Int,
         webxrMode: String,
+        nativeTokenOverride: String = "",
         picoSerial: String
     ) {
         self.serverHost = serverHost
@@ -65,7 +79,32 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.viserPort = viserPort
         self.webxrPort = webxrPort
         self.webxrMode = webxrMode
+        self.nativeTokenOverride = nativeTokenOverride
         self.picoSerial = picoSerial
+    }
+
+    /// Trimmed token override; empty when the console should be the only source.
+    public var trimmedNativeTokenOverride: String {
+        nativeTokenOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Decode tolerantly so a settings blob written by an older build still
+    /// loads. Synthesized decoding would throw on any missing key, and the store
+    /// falls back to `.default` on error — silently wiping the user's host and
+    /// ports on upgrade. `viserHost` already relies on this.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.serverHost = try container.decode(String.self, forKey: .serverHost)
+        self.viserHost = try container.decodeIfPresent(String.self, forKey: .viserHost)
+        self.clientPort = try container.decode(Int.self, forKey: .clientPort)
+        self.viserPort = try container.decode(Int.self, forKey: .viserPort)
+        self.webxrPort = try container.decode(Int.self, forKey: .webxrPort)
+        self.webxrMode = try container.decodeIfPresent(String.self, forKey: .webxrMode)
+            ?? Self.defaultWebXRMode
+        self.nativeTokenOverride = try container.decodeIfPresent(
+            String.self, forKey: .nativeTokenOverride
+        ) ?? ""
+        self.picoSerial = try container.decode(String.self, forKey: .picoSerial)
     }
 
     /// 去掉首尾空白后的主机名，避免用户粘贴时带上空格。
@@ -168,20 +207,22 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     /// The native APK connects to the loopback endpoint created by adb reverse.
     ///
-    /// The port is always the fixed native port on loopback — `adb reverse`
-    /// publishes the remote node there regardless of the configured host. Only
-    /// the token varies, and it must match what the remote node is checking.
+    /// The host is always loopback: `adb reverse` publishes the remote node
+    /// there regardless of the configured server host. The port follows
+    /// `webxrPort`, because a node started outside the console may bind its own
+    /// port and the reverse mapping has to target that same number. The token
+    /// must match what the remote node is checking.
     public func picoNativeWebSocketURL(token: String = AppSettings.nativeToken) -> String {
         let resolved = token.isEmpty ? Self.nativeToken : token
         var components = URLComponents()
         components.scheme = "ws"
         components.host = "127.0.0.1"
-        components.port = Self.defaultWebXRPort
+        components.port = webxrPort
         components.path = "/ws"
         components.queryItems = [
             URLQueryItem(name: "token", value: resolved),
         ]
-        return components.string ?? "ws://127.0.0.1:\(Self.defaultWebXRPort)/ws?token=\(resolved)"
+        return components.string ?? "ws://127.0.0.1:\(webxrPort)/ws?token=\(resolved)"
     }
 
     /// Extract the access token the console put in `browser_url`.
@@ -266,6 +307,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
         issues.append(contentsOf: Self.validatePort(clientPort, field: .clientPort, label: "Client 端口"))
         issues.append(contentsOf: Self.validatePort(viserPort, field: .viserPort, label: "Viser 端口"))
+        issues.append(contentsOf: Self.validatePort(webxrPort, field: .webxrPort, label: "EVA-VR 端口"))
         return issues
     }
 

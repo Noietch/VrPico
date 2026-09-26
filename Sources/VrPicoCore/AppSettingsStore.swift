@@ -25,12 +25,13 @@ public final class AppSettingsStore {
         }
         do {
             var settings = try JSONDecoder().decode(AppSettings.self, from: data)
-            // EVA-VR has one fixed native endpoint. Older builds exposed this
-            // field and may have persisted the fake robot ZMQ port (5555).
-            // Migrate it here so hidden legacy state can never redirect PICO.
-            if settings.webxrPort != AppSettings.defaultWebXRPort
-                || settings.webxrMode != AppSettings.defaultWebXRMode {
-                settings.webxrPort = AppSettings.defaultWebXRPort
+            // The mode is still fixed at `ar`. Older builds persisted it, so
+            // reset it here to keep hidden legacy state from reaching PICO.
+            //
+            // `webxrPort` is deliberately NOT normalized. It used to be pinned
+            // to 43876, which silently reverted the user's setting on every
+            // launch and made a node on any other port unreachable.
+            if settings.webxrMode != AppSettings.defaultWebXRMode {
                 settings.webxrMode = AppSettings.defaultWebXRMode
                 saveSettings(settings)
             }

@@ -4,8 +4,9 @@ import XCTest
 
 final class StatusProbeTests: XCTestCase {
 
-    /// Invalid console/Viser ports must fail without crashing. The native
-    /// input port is fixed and ignores the legacy persisted WebXR port.
+    /// Invalid console/Viser ports must fail without crashing. The native port
+    /// is configurable now, so an unusable value is reported rather than being
+    /// silently coerced to a fixed default.
     func testProbeServerRejectsOutOfRangePortsWithoutCrashing() async {
         let settings = AppSettings(
             serverHost: "127.0.0.1",
@@ -20,7 +21,7 @@ final class StatusProbeTests: XCTestCase {
 
         XCTAssertEqual(result.client, .failed(reason: "地址无效"))
         XCTAssertEqual(result.viser, .failed(reason: "地址无效"))
-        XCTAssertNotEqual(result.webxr, .failed(reason: "端口需要 1–65535"))
+        XCTAssertEqual(result.webxr, .failed(reason: "端口无效"))
     }
 
     /// A closed port must report unreachable rather than hang.

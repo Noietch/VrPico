@@ -28,7 +28,8 @@ connection.
 
 Start EVA-CLIENT normally, select `EVA-VR (PICO)` under Devices, then start
 Operation. VrPico can start the selected teleop service through the local or
-remote EVA Console API when needed. The native input service uses port `43876`.
+remote EVA Console API when needed. The native input service defaults to port
+`43876`; set **EVA-VR 端口** in settings when the node binds a different one.
 
 The node's access token is read from the console's `browser_url` on every
 connect, so VrPico works with both token modes:
@@ -38,8 +39,14 @@ connect, so VrPico works with both token modes:
 - `--token-stdin` — the node mints a random token at each start. VrPico passes
   the live value to the APK, so restarting the node does not strand the headset.
 
+A node started **outside** the console owns no `browser_url`, so its token
+cannot be discovered. Fill in **EVA-VR token** in settings for that case; VrPico
+then uses it instead of guessing `eva`, and skips the console start request so it
+never collides with the node's own ports. This is the normal setup when the node
+comes from a standalone collection stack.
+
 VrPico hands the endpoint to the APK through
-`am start --es server_url 'ws://127.0.0.1:43876/ws?token=<live>'`. EVA-VR v0.2.5
+`am start --es server_url 'ws://127.0.0.1:<port>/ws?token=<live>'`. EVA-VR v0.2.5
 reads that extra; older builds hardcoded `token=eva` and will be rejected with
 `401 Unauthorized` against a `--token-stdin` node.
 
@@ -85,7 +92,7 @@ The distributed `.app` contains its own ADB binary and the tested
 `EVA-VR v0.2.5` APK. No Android SDK, Homebrew, or manual APK installation is
 needed.
 
-Download `EVA-VR-macOS-v0.2.3.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
+Download `EVA-VR-macOS-v0.2.4.zip` from the [latest release](https://github.com/Noietch/VrPico/releases/latest),
 unzip it, and open `VrPico.app`. The app is ad-hoc signed, not Apple notarized;
 macOS may require removing the quarantine attribute after downloading:
 
@@ -95,18 +102,20 @@ xattr -dr com.apple.quarantine VrPico.app
 
 1. Enable USB debugging and accept the authorization prompt.
 2. Open settings and enter the EVA Client and Viser addresses as `IP:port`.
-3. Click **连接 EVA**.
+3. If the node does not use port `43876`, set **EVA-VR 端口** to match it. If the
+   node was not started by the console, fill in **EVA-VR token** too.
+4. Click **连接 EVA**.
 
 The app will:
 
 1. Detect the authorized PICO.
 2. Check whether package `org.eva.pico.input` is installed.
 3. Install the bundled `EVA-PICO.apk` only when the package is missing.
-4. Start or verify the EVA native teleop service.
+4. Start or verify the EVA native teleop service (skipped when a token is set).
 5. Start a Mac TCP relay only when EVA is remote; local EVA connects directly.
-6. Create `adb reverse tcp:43876 tcp:43876` when it is missing.
+6. Create `adb reverse tcp:<port> tcp:<port>` when it is missing.
 7. Launch `org.eva.pico.input/.MainActivity`.
-8. Pass `ws://127.0.0.1:43876/ws?token=<live>` to the native APK.
+8. Pass `ws://127.0.0.1:<port>/ws?token=<live>` to the native APK.
 
 The main status panel only shows the EVA service, PICO, and EVA-VR states.
 ADB, port forwarding, and relay details are handled automatically. Reconnecting
@@ -130,17 +139,24 @@ binary and does not require Android Studio, Unity, or a separate runtime.
 ## Troubleshooting
 
 - **Remote port unreachable**: confirm the remote node uses `--host 0.0.0.0`,
-  the port is open, and the Mac is on the required VPN. If `43876` is firewalled
-  but the console answers on `8415`, use your own SSH tunnel (above).
+  the port is open, and the Mac is on the required VPN. If the port is firewalled
+  but the console answers on `8415`, use your own SSH tunnel (above), or point
+  **EVA-VR 端口** at a port the firewall does allow.
+- **`HOST: DISCONNECTED` on the headset**: the APK reached the Mac but the relay
+  could not reach the node. A node started outside the console commonly binds a
+  port of its own, so check that **EVA-VR 端口** matches it — a mismatch looks
+  exactly like a dead server.
 - **Headset keeps reconnecting / node logs `401 Unauthorized`**: the APK is
-  older than v0.2.5 and hardcodes `token=eva`. Reinstall with **安装 EVA-VR**;
-  a `--token-stdin` node mints a random token the old build cannot know.
-- **Node logs `400 Bad Request` in a loop**: something is opening TCP to
-  `43876` without a WebSocket handshake. VrPico probes with a real handshake
+  older than v0.2.5 and hardcodes `token=eva`, or the configured token does not
+  match the node's. Reinstall with **安装 EVA-VR**; a `--token-stdin` node mints
+  a random token the old build cannot know, and a node started outside the
+  console needs **EVA-VR token** filled in.
+- **Node logs `400 Bad Request` in a loop**: something is opening TCP to the
+  native port without a WebSocket handshake. VrPico probes with a real handshake
   after the first connect, so a steady stream points at another tool.
 - **PICO unauthorized**: confirm USB debugging in the headset. After you accept
   the authorization prompt, VrPico adopts the new PICO automatically.
 - **No input**: confirm `EVA-VR` is installed and that Operation is started in
-  EVA-CLIENT. The native input service uses port `43876`.
+  EVA-CLIENT. The native input service defaults to port `43876`.
 - **No vibration**: vibration is sent only when EVA emits an explicit
   `haptic` message; ordinary input frames do not vibrate the controllers.

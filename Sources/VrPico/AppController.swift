@@ -32,12 +32,15 @@ enum PendingDeviceAction {
 enum NativeTokenResolution: Equatable {
     /// The console reported the live token through `browser_url`.
     case discovered(String)
-    /// The console reported none; assume the fixed `eva` default.
+    /// The user configured a token for a node the console does not own.
+    case manual(String)
+    /// Nothing was reported or configured; assume the fixed `eva` default.
     case fallback
 
     var token: String {
         switch self {
         case .discovered(let value): return value
+        case .manual(let value): return value
         case .fallback: return AppSettings.nativeToken
         }
     }
@@ -430,23 +433,39 @@ final class AppController: ObservableObject {
     /// Returns the access token the node is checking, or `.fallback` when the
     /// console does not report one. Nodes launched with `--token-stdin` mint a
     /// random token per start, so the caller must never assume `eva`.
+    ///
+    /// A node started outside the console (a standalone collection stack) owns
+    /// no `browser_url`, so a configured token wins for it: without one the
+    /// caller would guess `eva` and the retained APK would be rejected 401.
     private func ensureNativeTeleopStarted(
         _ requestedSettings: AppSettings
     ) async throws -> NativeTokenResolution {
         let host = requestedSettings.trimmedServerHost
-        let nativePort = UInt16(AppSettings.defaultWebXRPort)
+        guard let nativePort = UInt16(exactly: requestedSettings.webxrPort) else {
+            throw NSError(domain: "VrPico", code: 6, userInfo: [
+                NSLocalizedDescriptionKey: "EVA-VR 端口无效：\(requestedSettings.webxrPort)",
+            ])
+        }
+        let manualToken = requestedSettings.trimmedNativeTokenOverride
 
-        // Remote nodes are often firewalled on 43876 and reachable only through
-        // the adb-reverse path, so an unreachable host must not skip the start
-        // request. A server started outside this app still resolves here via
-        // its own `browser_url`.
+        // Remote nodes are often firewalled on the native port and reachable
+        // only through the adb-reverse path, so an unreachable host must not
+        // skip the start request. A server started outside this app still
+        // resolves here via its own `browser_url`.
         var status = try await consoleRequest(
             settings: requestedSettings,
             path: "api/device_settings"
         )
 
-        if Self.discoveredToken(from: status) != nil {
-            return .discovered(Self.discoveredToken(from: status)!)
+        if let token = Self.discoveredToken(from: status) {
+            return .discovered(token)
+        }
+        // A configured token means the user points at a node the console does
+        // not own. Probing would open a bare TCP connection the node logs as a
+        // bad handshake, and starting teleop would collide with that node's own
+        // ZMQ ports.
+        if !manualToken.isEmpty {
+            return .manual(manualToken)
         }
         if await StatusProbe.tcpReachable(host: host, port: nativePort) {
             return .fallback
@@ -512,7 +531,7 @@ final class AppController: ObservableObject {
     /// a plain TCP probe and accept that the node logs it as a bad handshake;
     /// after that, present a real handshake so polling stays quiet.
     private func nativeNodeIsReachable() async -> Bool {
-        let nativePort = UInt16(AppSettings.defaultWebXRPort)
+        guard let nativePort = UInt16(exactly: settings.webxrPort) else { return false }
         guard let token = activeSession?.token else {
             return await StatusProbe.tcpReachable(host: "127.0.0.1", port: nativePort)
         }
@@ -544,11 +563,15 @@ final class AppController: ObservableObject {
         defer { isBusy = false; busyMessage = "" }
 
         let host = requestedSettings.trimmedServerHost
-        let nativePort = AppSettings.defaultWebXRPort
-        let webxrPort = UInt16(nativePort)
+        // `validate()` runs first, so the port is guaranteed to fit a UInt16.
+        let nativePort = requestedSettings.webxrPort
+        guard let webxrPort = UInt16(exactly: nativePort) else {
+            lastError = "EVA-VR 端口无效：\(nativePort)"
+            return
+        }
 
         // 2. The console is not the VR data channel. Ask it to start the native
-        // teleop component, then verify the fixed EVA-VR port.
+        // teleop component, then verify the EVA-VR port.
         busyMessage = "启动 EVA-VR 服务…"
         let resolution: NativeTokenResolution
         do {
